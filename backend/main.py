@@ -768,6 +768,18 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
+    
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "smartstudy-steel.vercel.app",  
+        "*"  
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 if __name__ == "__main__":
     import uvicorn
