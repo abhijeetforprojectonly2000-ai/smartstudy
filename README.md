@@ -328,7 +328,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
    - **Environment:** Python 3
    - **Root Directory:** `backend`
    - **Build Command:** `pip install -r requirements.txt`
-   - **Start Command:** `uvicorn main:app --host 0.0.0.0 --port $PORT`
+   - **Start Command:** `cd backend&&uvicorn main:app --host 0.0.0.0 --port $PORT`
 5. Add environment variables:
    - `MONGODB_URI`
    - `OPENROUTER_API_KEY`
