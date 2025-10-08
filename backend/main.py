@@ -1,4 +1,4 @@
-# main.py - Complete FastAPI Backend (SECURE VERSION)
+# main.py - Complete FastAPI Backend 
 from __future__ import annotations
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
@@ -229,7 +229,11 @@ app = FastAPI(title="BeyondChats Backend", version="1.0.0")
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:3000",
+        "https://smartstudy-steel.vercel.app",  
+        "*"  
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -269,23 +273,23 @@ async def upload_pdf(file: UploadFile = File(...)):
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files allowed")
     
-    # Save file
+    # Save file using Path for cross-platform compatibility
     pdf_id = str(ObjectId())
-    file_path = os.path.join(UPLOAD_DIR, f"{pdf_id}.pdf")
+    file_path = Path(UPLOAD_DIR) / f"{pdf_id}.pdf"
     
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     
     # Extract text
-    pages_text = extract_text_from_pdf(file_path)
+    pages_text = extract_text_from_pdf(str(file_path))
     
-    # Store in MongoDB
+    # Store in MongoDB - store as string for compatibility
     pdf_doc = {
         "_id": ObjectId(pdf_id),
         "filename": file.filename,
-        "file_path": file_path,
+        "file_path": str(file_path),  # Store as string
         "total_pages": len(pages_text),
-        "pages_text": pages_text,  # Now has string keys
+        "pages_text": pages_text,
         "uploaded_at": datetime.utcnow()
     }
     
@@ -323,7 +327,14 @@ async def get_pdf(pdf_id: str):
     if not pdf:
         raise HTTPException(status_code=404, detail="PDF not found")
     
-    return FileResponse(pdf["file_path"], media_type="application/pdf", filename=pdf["filename"])
+    # Reconstruct path using Path for cross-platform compatibility
+    file_path = Path(UPLOAD_DIR) / f"{pdf_id}.pdf"
+    
+    # Check if file exists
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="PDF file not found on disk")
+    
+    return FileResponse(file_path, media_type="application/pdf", filename=pdf["filename"])
 
 @app.get("/api/pdf/{pdf_id}/text")
 async def get_pdf_text(pdf_id: str):
@@ -768,18 +779,6 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
-    
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "smartstudy-steel.vercel.app",  
-        "*"  
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 if __name__ == "__main__":
     import uvicorn
