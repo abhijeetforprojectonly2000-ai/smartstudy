@@ -818,10 +818,8 @@ This project is MIT licensed.
 
 ## 👨‍💻 Author
 
-**Your Name**
-- GitHub: [@yourusername](https://github.com/yourusername)
-- LinkedIn: [Your LinkedIn](https://linkedin.com/in/yourprofile)
-- Email: your.email@example.com
+**Abhijeet Suryavanshi**
+- Email: abhijeets20032000@gmail.com
 
 ## 🙏 Acknowledgments
 
