@@ -27,6 +27,12 @@ Before testing the frontend, please follow these steps:
    - Subsequent uploads are faster (10-30 seconds)
    - Please be patient and don't refresh the page during upload
 
+4. **Known Issue - PDF Preview:**
+   - PDF preview may show Internal Server Error (500)
+   - This is a known issue being addressed in improvements
+   - PDFs are still uploaded successfully and can be used for quizzes and chat
+   - See "Future Improvements" section for planned fixes
+
 ## 📋 Table of Contents
 
 - [Features](#-features)
@@ -59,6 +65,7 @@ Before testing the frontend, please follow these steps:
 - Split-view with document library
 - Download functionality
 - Responsive design for mobile
+- ⚠️ Note: Preview functionality currently experiencing issues (500 error)
 
 **Quiz Generator Engine**
 - AI-generated MCQs, SAQs, and LAQs
@@ -475,14 +482,17 @@ https://your-frontend.vercel.app
 
 ## 🚀 Future Improvements
 
-### 1. Performance Optimization - Upload Speed
+### 1. Performance Optimization - Upload Speed & PDF Preview
 
-**Current Issue:**
+**Current Issues:**
 - PDF upload takes 30-120 seconds due to:
   - Render cold start (30-50 seconds)
   - Synchronous PDF text extraction
   - Large file processing
   - Network latency
+- **Internal Server Error (500) during PDF preview:**
+  - Occurs when trying to preview uploaded PDFs
+  - Affects user ability to view uploaded documents
 
 **Proposed Solutions:**
 
@@ -530,13 +540,14 @@ https://your-frontend.vercel.app
 - Expected improvement: Instant for duplicate uploads
 
 **Implementation Priority:**
-1. ✅ Background processing (biggest impact)
-2. ✅ Upgrade to paid hosting (eliminates cold starts)
-3. ✅ Optimize PDF extraction library
-4. Progressive enhancement (better UX)
-5. CDN storage (scalability)
-6. Chunked upload (large files)
-7. Caching (duplicate detection)
+1. 🔴 **Fix PDF preview error (CRITICAL)** 
+2. ✅ Background processing (biggest impact)
+3. ✅ Upgrade to paid hosting (eliminates cold starts)
+4. ✅ Optimize PDF extraction library
+5. Progressive enhancement (better UX)
+6. CDN storage (scalability)
+7. Chunked upload (large files)
+8. Caching (duplicate detection)
 
 ### 2. Enhanced LLM Integration
 
@@ -717,6 +728,15 @@ Throughout this project, I extensively used AI coding assistants to accelerate d
 # Wait 30-50 seconds for cold start
 # Visit /health endpoint to wake it up
 # Check Render logs for errors
+```
+
+**Problem: PDF Preview Error (500)**
+```bash
+# Check if uploads directory exists
+# Verify file permissions
+# Check FastAPI logs for specific error
+# Ensure CORS is properly configured
+# Verify file path in database matches actual file location
 ```
 
 ### Frontend Issues
