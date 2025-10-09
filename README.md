@@ -32,9 +32,22 @@ Before testing the frontend, please follow these steps:
    - This is a known issue being addressed in improvements
    - PDFs are still uploaded successfully and can be used for quizzes and chat
    - See "Future Improvements" section for planned fixes
+
+5. **Known Limitation - Memory Constraints:**
+   - ⚠️ **Render free tier has 512MB RAM limit**
+   - Backend may crash with "Out of Memory" error during heavy usage
+   - This can happen when:
+     - Processing large PDFs (>20MB)
+     - Multiple concurrent users uploading PDFs
+     - Running intensive AI operations
+   - If this occurs, the service will automatically restart (30-50 seconds)
+   - For testing, please use the provided sample PDFs from the repository
+   - See "Future Improvements" section for hosting upgrade plans
      
-5. **Testing Files**
+6. **Testing Files**
     - Uploaded a zipfile of the documents to be tested for this app
+    - **Please use ONLY the provided sample PDFs** from the repository for testing
+    - Uploading additional or larger PDFs may cause memory errors on free tier
 
 ## 📋 Table of Contents
 
@@ -133,7 +146,7 @@ Before testing the frontend, please follow these steps:
 
 ### Deployment
 - **Vercel** - Frontend hosting
-- **Render** - Backend hosting (Free tier with cold starts)
+- **Render** - Backend hosting (Free tier with cold starts and 512MB RAM limit)
 
 ## 📁 Project Structure
 
@@ -348,7 +361,8 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
 **Important Notes:**
 - Render free tier spins down after 15 minutes of inactivity
 - First request after spin-down takes 30-50 seconds (cold start)
-- For production, consider upgrading to a paid plan to avoid cold starts
+- **Free tier has 512MB RAM limit** - may crash with "Out of Memory" error
+- For production, consider upgrading to a paid plan to avoid cold starts and memory issues
 - Render automatically sets the `PORT` environment variable
 
 ### Testing the Deployed Application
@@ -372,6 +386,7 @@ https://your-frontend.vercel.app
 - Be patient during first upload (1-2 minutes)
 - Don't refresh the page
 - Subsequent uploads are faster
+- **Use only the provided sample PDFs** to avoid memory issues
 
 ## 🏗 Implementation Details
 
@@ -430,7 +445,7 @@ https://your-frontend.vercel.app
 ### 4. PDF Storage
 - **Decision:** Local file system + MongoDB metadata
 - **Reason:** Simple, no S3 costs for MVP
-- **Trade-off:** Not scalable for production
+- **Trade-off:** Not scalable for production, consumes server memory
 - **Future:** Migrate to S3/CloudFlare R2
 
 ### 5. Authentication
@@ -453,8 +468,8 @@ https://your-frontend.vercel.app
 ### 8. Hosting Provider
 - **Decision:** Render free tier for backend
 - **Reason:** Zero cost, easy deployment, good for MVP
-- **Trade-off:** Cold starts after 15 minutes of inactivity
-- **Future:** Upgrade to paid tier for always-on service
+- **Trade-off:** Cold starts after 15 minutes + **512MB RAM limit causing crashes**
+- **Future:** Upgrade to paid tier ($7-25/month) for always-on service and 2GB+ RAM
 
 ## ✅ What's Completed
 
@@ -552,7 +567,153 @@ https://your-frontend.vercel.app
 7. Chunked upload (large files)
 8. Caching (duplicate detection)
 
-### 2. Enhanced LLM Integration
+### 2. Memory Management & Hosting Upgrade
+
+**Current Critical Issue:**
+- ⚠️ **Render free tier crashes with "Out of Memory (512MB)" error**
+- Happens during:
+  - Large PDF processing (>20MB)
+  - Multiple concurrent uploads
+  - Heavy AI operations
+  - Long-running sessions
+
+**Immediate Solutions:**
+
+**A. Upgrade to Render Paid Plans**
+- **Starter Plan ($7/month):**
+  - 512MB RAM (same as free, but no cold starts)
+  - Best for: Light usage, faster response times
+- **Standard Plan ($25/month):**
+  - 2GB RAM ✅ **RECOMMENDED**
+  - No cold starts
+  - Handles multiple concurrent users
+  - Best for: Production-ready deployment
+- **Pro Plan ($85/month):**
+  - 4GB RAM
+  - Best for: Heavy usage, many concurrent users
+
+**B. Alternative Hosting Providers**
+- **Railway ($5/month starter):**
+  - 8GB RAM on free tier during trial
+  - Better resource allocation
+  - No cold starts on paid plans
+- **Fly.io:**
+  - Pay-as-you-go pricing
+  - Better memory management
+  - Edge deployment for faster response
+- **AWS EC2/Lambda:**
+  - Flexible scaling
+  - Pay only for usage
+  - More configuration required
+- **DigitalOcean App Platform ($12/month):**
+  - 1GB RAM
+  - Simple deployment
+  - Good documentation
+
+**C. Code Optimization (Short-term fixes)**
+```python
+# Implement streaming PDF processing
+# Free up memory after each page extraction
+# Use generators instead of loading all data
+# Add memory monitoring and cleanup
+```
+
+**D. External Storage Migration**
+- Move PDF storage to S3/R2 (offload from server memory)
+- Store extracted text in MongoDB (reduce re-processing)
+- Implement lazy loading for large documents
+
+**Implementation Priority:**
+1. 🔴 **Upgrade to Render Standard Plan ($25/month) - CRITICAL**
+2. ✅ Migrate PDF storage to Cloudflare R2/AWS S3
+3. ✅ Implement streaming PDF processing
+4. ✅ Add memory monitoring and alerts
+5. Consider Railway/Fly.io as alternatives
+
+**Cost-Benefit Analysis:**
+- **Free tier:** $0/month - Frequent crashes, poor UX
+- **Standard tier:** $25/month - Stable, handles 10+ concurrent users
+- **ROI:** Better user experience = More users = Justifies cost
+
+### 3. PDF Type Support Expansion
+
+**Current Limitation:**
+- ⚠️ **Free tier can only reliably handle the provided sample PDFs**
+- Memory constraints (512MB) prevent processing of:
+  - Large PDFs (>20MB)
+  - Scanned/image-heavy PDFs
+  - Multiple large PDFs simultaneously
+  - PDFs with complex formatting
+
+**Why This Limitation Exists:**
+- PDFPlumber loads entire PDF into memory
+- Text extraction is memory-intensive
+- No background processing or streaming
+- Limited server resources on free tier
+
+**Future Support (After Hosting Upgrade):**
+
+**A. Support for Various PDF Types:**
+- **Text-based PDFs:** ✅ Currently supported
+- **Scanned PDFs with OCR:**
+  - Implement Tesseract OCR integration
+  - Extract text from images in PDFs
+  - Support for scanned textbooks/notes
+- **Image-heavy PDFs:**
+  - Optimize image handling
+  - Extract text separately from images
+  - Reduce memory footprint
+- **Large PDFs (50MB+):**
+  - Streaming processing
+  - Page-by-page extraction
+  - Progress tracking
+- **Protected PDFs:**
+  - Password-protected PDF support
+  - User provides password during upload
+- **Multi-column layouts:**
+  - Improve text extraction accuracy
+  - Preserve reading order
+- **Mathematical notation:**
+  - LaTeX/MathML extraction
+  - Preserve equations in quizzes
+
+**B. File Format Expansion:**
+- **DOCX/DOC:** Word documents support
+- **EPUB:** E-book format support
+- **HTML/Markdown:** Web-based content
+- **PowerPoint:** Presentation slides
+- **Images (JPG/PNG):** Direct image upload with OCR
+
+**C. Bulk Upload & Management:**
+- Upload multiple PDFs at once
+- Folder/category organization
+- Drag-and-drop multiple files
+- ZIP file upload and extraction
+- Batch processing queue
+
+**Implementation Requirements:**
+1. 🔴 **PREREQUISITE: Upgrade hosting to 2GB+ RAM**
+2. Implement OCR (Tesseract/Google Vision API)
+3. Add streaming file processing
+4. Migrate to cloud storage (S3/R2)
+5. Implement background job queue (Celery)
+6. Add file format converters
+7. Optimize memory usage patterns
+
+**Why Not Now:**
+- Current 512MB RAM cannot handle diverse PDFs
+- Would cause frequent crashes and poor UX
+- Need stable infrastructure first
+- Storage costs for cloud migration
+
+**Post-Upgrade Capabilities:**
+- Process PDFs up to 100MB
+- Handle 5+ concurrent uploads
+- Support scanned documents with OCR
+- Enable batch processing
+- Store unlimited PDFs in cloud storage
+
+### 4. Enhanced LLM Integration
 
 **Better Prompt Engineering:**
 - Implement few-shot learning with example Q&A pairs
@@ -566,7 +727,7 @@ https://your-frontend.vercel.app
 - Fine-tuned models specifically for educational content
 - Local LLM support (Ollama, LMStudio) for offline usage
 
-### 3. YouTube Integration Enhancement
+### 5. YouTube Integration Enhancement
 
 **Current Limitation:**
 - Basic models often generate generic recommendations without actual YouTube links
@@ -579,7 +740,7 @@ https://your-frontend.vercel.app
 - **Playlist Generation:** Create custom playlists based on topics
 - **Video Embedding:** Embed videos directly in the app
 
-### 4. Delete Functionality
+### 6. Delete Functionality
 
 **PDF Deletion:**
 - Add delete button for each PDF in library
@@ -597,55 +758,55 @@ https://your-frontend.vercel.app
 - Clear all progress option with warning
 - Export quiz results before deletion
 
-### 5. Multi-User Support
+### 7. Multi-User Support
 - User registration and authentication
 - Personal dashboards and data isolation
 - Share quizzes and study materials
 - Leaderboards and social features
 
-### 6. Advanced RAG
+### 8. Advanced RAG
 - Vector embeddings with Pinecone/Weaviate
 - Semantic search for better relevance
 - Multi-document query support
 - Hybrid search (keyword + semantic)
 
-### 7. Offline Support
+### 9. Offline Support
 - Progressive Web App (PWA) capabilities
 - Local PDF caching
 - Offline quiz generation with cached models
 - Sync when back online
 
-### 8. Accessibility
+### 10. Accessibility
 - Screen reader support
 - Keyboard navigation
 - High contrast mode
 - Text-to-speech for questions
 
-### 9. Analytics & Insights
+### 11. Analytics & Insights
 - Learning patterns analysis
 - Time spent per topic
 - Difficulty progression tracking
 - Personalized study recommendations
 
-### 10. Export & Import
+### 12. Export & Import
 - Export progress as PDF/CSV
 - Import quizzes from other formats
 - Backup and restore functionality
 - Share quiz templates
 
-### 11. Mobile App
+### 13. Mobile App
 - React Native version
 - Native PDF rendering
 - Push notifications for study reminders
 - Offline-first architecture
 
-### 12. Collaboration Features
+### 14. Collaboration Features
 - Study groups
 - Shared quiz sessions
 - Peer-to-peer chat
 - Teacher dashboard for monitoring
 
-### 13. Gamification
+### 15. Gamification
 - Points and badges system
 - Daily streaks
 - Challenge friends
@@ -733,6 +894,21 @@ Throughout this project, I extensively used AI coding assistants to accelerate d
 # Check Render logs for errors
 ```
 
+**Problem: Out of Memory Error (512MB limit)**
+```bash
+# CRITICAL: This is a hosting limitation
+# Temporary fixes:
+#   - Use smaller PDFs (<10MB)
+#   - Avoid concurrent uploads
+#   - Restart the service if crashed
+# Permanent fix:
+#   - Upgrade to Render Standard plan ($25/month, 2GB RAM)
+#   - Or migrate to Railway/Fly.io
+# Check Render logs for memory usage:
+#   - Look for "out of memory" errors
+#   - Monitor memory spikes during PDF processing
+```
+
 **Problem: PDF Preview Error (500)**
 ```bash
 # Check if uploads directory exists
@@ -758,6 +934,7 @@ Throughout this project, I extensively used AI coding assistants to accelerate d
 # Verify PDF is text-based (not scanned)
 # Check browser console for errors
 # Wait patiently (1-2 minutes for first upload)
+# If using free tier, use only sample PDFs provided
 ```
 
 **Problem: Upload timeout**
@@ -766,6 +943,7 @@ Throughout this project, I extensively used AI coding assistants to accelerate d
 # Verify backend is not in cold start
 # Try smaller PDF first
 # Check Render logs for backend errors
+# Check for out of memory errors on free tier
 ```
 
 ## 📝 Git Commit Guidelines
