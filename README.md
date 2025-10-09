@@ -34,7 +34,7 @@ Before testing the frontend, please follow these steps:
    - See "Future Improvements" section for planned fixes
      
 5. **Testing Files**
-    - Uploaded a zipfile for the documents to be tested for this app
+    - Uploaded a zipfile of the documents to be tested for this app
 
 ## 📋 Table of Contents
 
