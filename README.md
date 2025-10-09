@@ -27,13 +27,7 @@ Before testing the frontend, please follow these steps:
    - Subsequent uploads are faster (10-30 seconds)
    - Please be patient and don't refresh the page during upload
 
-4. **Known Issue - PDF Preview:**
-   - PDF preview may show Internal Server Error (500)
-   - This is a known issue being addressed in improvements
-   - PDFs are still uploaded successfully and can be used for quizzes and chat
-   - See "Future Improvements" section for planned fixes
-
-5. **Known Limitation - Memory Constraints:**
+4. **Known Limitation - Memory Constraints:**
    - ⚠️ **Render free tier has 512MB RAM limit**
    - Backend may crash with "Out of Memory" error during heavy usage
    - This can happen when:
@@ -42,9 +36,8 @@ Before testing the frontend, please follow these steps:
      - Running intensive AI operations
    - If this occurs, the service will automatically restart (30-50 seconds)
    - For testing, please use the provided sample PDFs from the repository
-   - See "Future Improvements" section for hosting upgrade plans
      
-6. **Testing Files**
+5. **Testing Files**
     - Uploaded a zipfile of the documents to be tested for this app
     - **Please use ONLY the provided sample PDFs** from the repository for testing
     - Uploading additional or larger PDFs may cause memory errors on free tier
@@ -81,7 +74,6 @@ Before testing the frontend, please follow these steps:
 - Split-view with document library
 - Download functionality
 - Responsive design for mobile
-- ⚠️ Note: Preview functionality currently experiencing issues (500 error)
 
 **Quiz Generator Engine**
 - AI-generated MCQs, SAQs, and LAQs
@@ -136,7 +128,9 @@ Before testing the frontend, please follow these steps:
 - **FastAPI** - Python web framework
 - **Uvicorn** - ASGI server
 - **Motor** - Async MongoDB driver
-- **PDFPlumber** - PDF text extraction
+- **PDFPlumber** - Primary PDF text extraction
+- **PyPDF2** - Fallback PDF extraction
+- **PyMuPDF (fitz)** - Alternative PDF extraction
 - **httpx** - Async HTTP client
 - **OpenRouter API** - LLM integration (GPT-3.5)
 - **Pydantic** - Data validation
@@ -393,11 +387,17 @@ https://your-frontend.vercel.app
 ### PDF Processing Pipeline
 1. **Upload:** User uploads PDF via drag-drop or file selector
 2. **Storage:** File saved to `/uploads` with unique ObjectId
-3. **Extraction:** PDFPlumber extracts text page-by-page
+3. **Extraction:** Multi-method text extraction (PDFPlumber → PyMuPDF → PyPDF2)
 4. **Database:** Metadata and text stored in MongoDB
 5. **Retrieval:** Citations found using keyword matching
 
 **Current Upload Time:** 30-120 seconds (depending on cold start and PDF size)
+
+**Text Extraction Strategy:**
+- **Primary Method:** PDFPlumber (best for most text-based PDFs)
+- **Fallback 1:** PyMuPDF/fitz (good for scanned PDFs and complex layouts)
+- **Fallback 2:** PyPDF2 (final fallback for problematic PDFs)
+- **Image Detection:** Automatically detects image-based PDFs that may need OCR
 
 ### Quiz Generation Flow
 1. **Context Building:** Extract relevant text from PDF (4000 char limit)
@@ -471,11 +471,19 @@ https://your-frontend.vercel.app
 - **Trade-off:** Cold starts after 15 minutes + **512MB RAM limit causing crashes**
 - **Future:** Upgrade to paid tier ($7-25/month) for always-on service and 2GB+ RAM
 
+### 9. PDF Extraction Strategy
+- **Decision:** Multi-method fallback approach (PDFPlumber → PyMuPDF → PyPDF2)
+- **Reason:** Maximize compatibility with different PDF types
+- **Benefit:** Higher success rate for text extraction
+- **Trade-off:** Slightly more complex error handling
+
 ## ✅ What's Completed
 
 ### Core Features
 - ✅ Source selector with PDF upload
 - ✅ PDF viewer with navigation
+- ✅ Multi-method PDF text extraction (PDFPlumber, PyMuPDF, PyPDF2)
+- ✅ Image-based PDF detection
 - ✅ Quiz generator (MCQ, SAQ, LAQ)
 - ✅ Quiz scoring and explanations
 - ✅ Progress tracking dashboard
@@ -497,10 +505,11 @@ https://your-frontend.vercel.app
 - ✅ Loading states and error handling
 - ✅ Toast notifications
 - ✅ Smooth animations
+- ✅ Robust PDF processing with multiple extraction methods
 
 ## 🚀 Future Improvements
 
-### 1. Performance Optimization - Upload Speed & PDF Preview
+### 1. Performance Optimization - Upload Speed
 
 **Current Issues:**
 - PDF upload takes 30-120 seconds due to:
@@ -508,9 +517,6 @@ https://your-frontend.vercel.app
   - Synchronous PDF text extraction
   - Large file processing
   - Network latency
-- **Internal Server Error (500) during PDF preview:**
-  - Occurs when trying to preview uploaded PDFs
-  - Affects user ability to view uploaded documents
 
 **Proposed Solutions:**
 
@@ -534,7 +540,7 @@ https://your-frontend.vercel.app
 - Expected improvement: Better UX, resumable uploads
 
 **D. Optimize PDF Processing**
-- Use faster PDF library (PyPDF2 instead of pdfplumber for text-only)
+- Use faster PDF library combinations
 - Parallel page processing with asyncio
 - Process multiple pages simultaneously
 - Expected improvement: 40-60% faster extraction
@@ -558,14 +564,13 @@ https://your-frontend.vercel.app
 - Expected improvement: Instant for duplicate uploads
 
 **Implementation Priority:**
-1. 🔴 **Fix PDF preview error (CRITICAL)** 
-2. ✅ Background processing (biggest impact)
-3. ✅ Upgrade to paid hosting (eliminates cold starts)
-4. ✅ Optimize PDF extraction library
-5. Progressive enhancement (better UX)
-6. CDN storage (scalability)
-7. Chunked upload (large files)
-8. Caching (duplicate detection)
+1. ✅ Background processing (biggest impact)
+2. ✅ Upgrade to paid hosting (eliminates cold starts)
+3. ✅ Optimize PDF extraction library
+4. Progressive enhancement (better UX)
+5. CDN storage (scalability)
+6. Chunked upload (large files)
+7. Caching (duplicate detection)
 
 ### 2. Memory Management & Hosting Upgrade
 
@@ -646,7 +651,7 @@ https://your-frontend.vercel.app
   - PDFs with complex formatting
 
 **Why This Limitation Exists:**
-- PDFPlumber loads entire PDF into memory
+- PDF extraction loads entire PDF into memory
 - Text extraction is memory-intensive
 - No background processing or streaming
 - Limited server resources on free tier
@@ -654,7 +659,7 @@ https://your-frontend.vercel.app
 **Future Support (After Hosting Upgrade):**
 
 **A. Support for Various PDF Types:**
-- **Text-based PDFs:** ✅ Currently supported
+- **Text-based PDFs:** ✅ Currently supported with multi-method extraction
 - **Scanned PDFs with OCR:**
   - Implement Tesseract OCR integration
   - Extract text from images in PDFs
@@ -850,6 +855,8 @@ Throughout this project, I extensively used AI coding assistants to accelerate d
 
 ### Manual Testing Checklist
 - ✅ PDF upload and preview
+- ✅ Multi-method PDF text extraction
+- ✅ Image-based PDF detection
 - ✅ Quiz generation and scoring
 - ✅ Chat with citations
 - ✅ Progress tracking
@@ -909,13 +916,13 @@ Throughout this project, I extensively used AI coding assistants to accelerate d
 #   - Monitor memory spikes during PDF processing
 ```
 
-**Problem: PDF Preview Error (500)**
+**Problem: PDF Text Extraction Failed**
 ```bash
-# Check if uploads directory exists
-# Verify file permissions
-# Check FastAPI logs for specific error
-# Ensure CORS is properly configured
-# Verify file path in database matches actual file location
+# Check if PDF is text-based (not scanned image)
+# Verify PDF is not corrupted
+# Check PDF is not password-protected
+# Try different PDF - the app now tries 3 extraction methods
+# Check backend logs for specific error
 ```
 
 ### Frontend Issues
