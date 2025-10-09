@@ -32,6 +32,9 @@ Before testing the frontend, please follow these steps:
    - This is a known issue being addressed in improvements
    - PDFs are still uploaded successfully and can be used for quizzes and chat
    - See "Future Improvements" section for planned fixes
+     
+5. **Testing Files**
+    - Uploaded a zipfile for the documents to be tested for this app
 
 ## 📋 Table of Contents
 
