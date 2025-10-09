@@ -1,12 +1,29 @@
+# FastAPI Core
 fastapi==0.115.0
 uvicorn==0.32.0
 python-multipart==0.0.12
+
+# PDF Processing - Multiple extraction methods
 pdfplumber==0.10.3
+PyPDF2==3.0.1
+PyMuPDF==1.24.10
+
+# MongoDB
 motor==3.3.2
 pymongo==4.6.0
+
+# Data Validation
 pydantic==2.11.0
 pydantic-settings==2.6.0
+
+# Environment Variables
 python-dotenv==1.0.0
-openai==1.54.0
+
+# HTTP Client (for OpenRouter API)
+httpx==0.27.0
+
+# File Operations
 aiofiles==23.2.1
+
+# Additional utilities
 requests==2.31.0
