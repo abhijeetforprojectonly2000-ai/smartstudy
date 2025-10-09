@@ -17,6 +17,8 @@ from bson import ObjectId
 import shutil
 from pathlib import Path
 from urllib.parse import quote_plus
+import PyPDF2
+import fitz  
 
 # Load environment variables from .env file if it exists
 try:
@@ -108,19 +110,94 @@ class YouTubeRequest(BaseModel):
     pdf_id: Optional[str] = None
 
 # ============================================================================
-# UTILITY FUNCTIONS
+# UTILITY FUNCTIONS 
 # ============================================================================
-def extract_text_from_pdf(pdf_path: str) -> Dict[str, str]:
-    """Extract text from PDF page by page"""
+def extract_text_with_pdfplumber(pdf_path: str) -> Dict[str, str]:
+    """Method 1: Extract using pdfplumber"""
     pages_text = {}
     try:
         with pdfplumber.open(pdf_path) as pdf:
             for i, page in enumerate(pdf.pages):
                 text = page.extract_text() or ""
-                pages_text[str(i + 1)] = text  # Convert to string key for MongoDB
+                if text.strip():  # Only add if there's actual text
+                    pages_text[str(i + 1)] = text
+        return pages_text
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"PDF extraction failed: {str(e)}")
-    return pages_text
+        print(f"⚠️  pdfplumber failed: {str(e)}")
+        return {}
+
+def extract_text_with_pypdf2(pdf_path: str) -> Dict[str, str]:
+    """Method 2: Extract using PyPDF2"""
+    pages_text = {}
+    try:
+        with open(pdf_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            for i, page in enumerate(pdf_reader.pages):
+                text = page.extract_text() or ""
+                if text.strip():
+                    pages_text[str(i + 1)] = text
+        return pages_text
+    except Exception as e:
+        print(f"⚠️  PyPDF2 failed: {str(e)}")
+        return {}
+
+def extract_text_with_pymupdf(pdf_path: str) -> Dict[str, str]:
+    """Method 3: Extract using PyMuPDF (fitz)"""
+    pages_text = {}
+    try:
+        doc = fitz.open(pdf_path)
+        for i in range(len(doc)):
+            page = doc[i]
+            text = page.get_text() or ""
+            if text.strip():
+                pages_text[str(i + 1)] = text
+        doc.close()
+        return pages_text
+    except Exception as e:
+        print(f"⚠️  PyMuPDF failed: {str(e)}")
+        return {}
+
+def extract_text_from_pdf(pdf_path: str) -> Dict[str, str]:
+    """Extract text from PDF using multiple methods as fallback"""
+    print(f"📄 Attempting to extract text from: {pdf_path}")
+    
+    # Try pdfplumber first (best for most PDFs)
+    pages_text = extract_text_with_pdfplumber(pdf_path)
+    if pages_text:
+        print(f"✅ Extracted {len(pages_text)} pages using pdfplumber")
+        return pages_text
+    
+    # Fallback to PyMuPDF (good for scanned PDFs)
+    print("🔄 Trying PyMuPDF...")
+    pages_text = extract_text_with_pymupdf(pdf_path)
+    if pages_text:
+        print(f"✅ Extracted {len(pages_text)} pages using PyMuPDF")
+        return pages_text
+    
+    # Final fallback to PyPDF2
+    print("🔄 Trying PyPDF2...")
+    pages_text = extract_text_with_pypdf2(pdf_path)
+    if pages_text:
+        print(f"✅ Extracted {len(pages_text)} pages using PyPDF2")
+        return pages_text
+    
+    # If all methods fail, check if PDF has pages but no text (image-based PDF)
+    try:
+        doc = fitz.open(pdf_path)
+        total_pages = len(doc)
+        doc.close()
+        
+        if total_pages > 0:
+            print(f"⚠️  PDF has {total_pages} pages but no extractable text (might be image-based)")
+            # Return empty pages to indicate structure exists
+            return {str(i + 1): "[Image-based page - OCR needed]" for i in range(total_pages)}
+    except:
+        pass
+    
+    raise HTTPException(
+        status_code=422, 
+        detail="Unable to extract text from PDF. The file might be corrupted, password-protected, or image-based. Please try a different PDF or use OCR."
+    )
 
 def chunk_text(text: str, chunk_size: int = 1000) -> List[str]:
     """Split text into chunks"""
@@ -229,11 +306,7 @@ app = FastAPI(title="BeyondChats Backend", version="1.0.0")
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "https://smartstudy-steel.vercel.app",  
-        "*"  
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -265,42 +338,84 @@ async def shutdown_event():
     await close_db()
 
 # ============================================================================
-# PDF ROUTES
+# PDF ROUTES 
 # ============================================================================
 @app.post("/api/pdf/upload")
 async def upload_pdf(file: UploadFile = File(...)):
-    """Upload and process a PDF"""
-    if not file.filename.endswith('.pdf'):
-        raise HTTPException(status_code=400, detail="Only PDF files allowed")
+    """Upload and process a PDF with improved extraction"""
+    # Validate file type
+    if not file.filename.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
     
-    # Save file using Path for cross-platform compatibility
+    # Validate file size (max 50MB)
+    file_size = 0
     pdf_id = str(ObjectId())
-    file_path = Path(UPLOAD_DIR) / f"{pdf_id}.pdf"
+    file_path = os.path.join(UPLOAD_DIR, f"{pdf_id}.pdf")
     
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-    
-    # Extract text
-    pages_text = extract_text_from_pdf(str(file_path))
-    
-    # Store in MongoDB - store as string for compatibility
-    pdf_doc = {
-        "_id": ObjectId(pdf_id),
-        "filename": file.filename,
-        "file_path": str(file_path),  # Store as string
-        "total_pages": len(pages_text),
-        "pages_text": pages_text,
-        "uploaded_at": datetime.utcnow()
-    }
-    
-    await get_database()["pdfs"].insert_one(pdf_doc)
-    
-    return {
-        "pdf_id": pdf_id,
-        "filename": file.filename,
-        "total_pages": len(pages_text),
-        "message": "PDF uploaded successfully"
-    }
+    try:
+        # Save file with size check
+        with open(file_path, "wb") as buffer:
+            while chunk := await file.read(1024 * 1024):  # Read 1MB at a time
+                file_size += len(chunk)
+                if file_size > 50 * 1024 * 1024:  # 50MB limit
+                    buffer.close()
+                    os.remove(file_path)
+                    raise HTTPException(status_code=413, detail="File too large. Maximum size is 50MB")
+                buffer.write(chunk)
+        
+        print(f"📥 Saved PDF: {file.filename} ({file_size / 1024:.2f} KB)")
+        
+        # Extract text with improved method
+        pages_text = extract_text_from_pdf(file_path)
+        
+        if not pages_text:
+            os.remove(file_path)
+            raise HTTPException(
+                status_code=422,
+                detail="No text could be extracted from this PDF. It might be image-based or corrupted."
+            )
+        
+        # Check if it's an image-based PDF
+        has_real_text = any(
+            "[Image-based page" not in text 
+            for text in pages_text.values()
+        )
+        
+        # Store in MongoDB
+        pdf_doc = {
+            "_id": ObjectId(pdf_id),
+            "filename": file.filename,
+            "file_path": file_path,
+            "file_size": file_size,
+            "total_pages": len(pages_text),
+            "pages_text": pages_text,
+            "is_image_based": not has_real_text,
+            "uploaded_at": datetime.utcnow()
+        }
+        
+        await get_database()["pdfs"].insert_one(pdf_doc)
+        
+        print(f"✅ Successfully processed PDF: {file.filename}")
+        
+        return {
+            "pdf_id": pdf_id,
+            "filename": file.filename,
+            "total_pages": len(pages_text),
+            "file_size": file_size,
+            "is_image_based": not has_real_text,
+            "message": "PDF uploaded and processed successfully" if has_real_text else "PDF uploaded but appears to be image-based. OCR might be needed for best results."
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Cleanup on error
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        print(f"❌ PDF upload error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"PDF processing failed: {str(e)}")
 
 @app.get("/api/pdf/list")
 async def list_pdfs():
@@ -313,6 +428,8 @@ async def list_pdfs():
                 "pdf_id": str(pdf["_id"]),
                 "filename": pdf["filename"],
                 "total_pages": pdf["total_pages"],
+                "file_size": pdf.get("file_size", 0),
+                "is_image_based": pdf.get("is_image_based", False),
                 "uploaded_at": pdf["uploaded_at"].isoformat()
             }
             for pdf in pdfs
@@ -327,14 +444,7 @@ async def get_pdf(pdf_id: str):
     if not pdf:
         raise HTTPException(status_code=404, detail="PDF not found")
     
-    # Reconstruct path using Path for cross-platform compatibility
-    file_path = Path(UPLOAD_DIR) / f"{pdf_id}.pdf"
-    
-    # Check if file exists
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="PDF file not found on disk")
-    
-    return FileResponse(file_path, media_type="application/pdf", filename=pdf["filename"])
+    return FileResponse(pdf["file_path"], media_type="application/pdf", filename=pdf["filename"])
 
 @app.get("/api/pdf/{pdf_id}/text")
 async def get_pdf_text(pdf_id: str):
@@ -346,8 +456,26 @@ async def get_pdf_text(pdf_id: str):
     
     return {
         "pdf_id": pdf_id,
-        "pages_text": pdf["pages_text"]
+        "pages_text": pdf["pages_text"],
+        "is_image_based": pdf.get("is_image_based", False)
     }
+
+@app.delete("/api/pdf/{pdf_id}")
+async def delete_pdf(pdf_id: str):
+    """Delete a PDF"""
+    pdf = await get_database()["pdfs"].find_one({"_id": ObjectId(pdf_id)})
+    
+    if not pdf:
+        raise HTTPException(status_code=404, detail="PDF not found")
+    
+    # Delete file
+    if os.path.exists(pdf["file_path"]):
+        os.remove(pdf["file_path"])
+    
+    # Delete from database
+    await get_database()["pdfs"].delete_one({"_id": ObjectId(pdf_id)})
+    
+    return {"message": "PDF deleted successfully"}
 
 # ============================================================================
 # QUIZ ROUTES
@@ -361,6 +489,13 @@ async def generate_quiz(request: QuizGenerateRequest):
             pdf = await get_database()["pdfs"].find_one({"_id": ObjectId(request.pdf_id)})
             if not pdf:
                 raise HTTPException(status_code=404, detail="PDF not found")
+            
+            # Check if image-based
+            if pdf.get("is_image_based", False):
+                raise HTTPException(
+                    status_code=422,
+                    detail="Cannot generate quiz from image-based PDF. Please use a text-based PDF."
+                )
             
             # Combine all pages text
             all_text = " ".join(pdf["pages_text"].values())
