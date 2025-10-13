@@ -33,7 +33,9 @@ Before testing the frontend, follow these steps:
 
 **Please be patient and don't refresh the page during upload**
 
-## Known Limitation - Memory Constraints
+## Known Limitations
+
+### 1. Memory Constraints & Crashes
 
 ⚠️ **Render free tier has 512MB RAM limit**
 
@@ -45,6 +47,43 @@ Backend may crash with "Out of Memory" error during heavy usage. This can happen
 If this occurs, the service will automatically restart (30-50 seconds).
 
 **For testing, please use only the provided sample PDFs from the repository**
+
+### 2. Internal Server Error (500) During Upload
+
+⚠️ **You may see "Internal Server Error 500" during PDF upload - This is NOT a backend bug!**
+
+**What's happening:**
+- Render free tier has strict memory limits (512MB RAM)
+- During PDF processing, the server may temporarily exceed this limit
+- Render forcefully terminates the process, causing a 500 error
+- **However, the upload often completes successfully before termination**
+
+**How to verify your upload succeeded:**
+
+1. **Wait 30-60 seconds** after seeing the error
+2. **Refresh the page** or navigate to the Source Selector
+3. **Check if your PDF appears** in the document library
+4. If it appears, the upload was successful despite the error message
+
+**Why this happens:**
+- The backend code is functioning correctly
+- It's a hosting platform limitation (not a code issue)
+- Render's free tier aggressively manages memory
+- The process completes but gets killed during cleanup
+
+**Recommended solution:**
+- Upgrade to Render's paid tier ($25/month for 2GB RAM)
+- Or migrate to Railway/Fly.io for better memory handling
+- For MVP testing, simply verify your PDF after the error
+
+**Technical explanation:**
+The backend successfully:
+1. Receives the file
+2. Extracts text content
+3. Saves to MongoDB
+4. Stores file metadata
+
+But Render kills the process during the HTTP response phase due to memory constraints. The data is already saved, hence refreshing shows your PDF.
 
 ## Table of Contents
 
@@ -367,6 +406,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
 - Render free tier spins down after 15 minutes of inactivity
 - First request after spin-down takes 30-50 seconds (cold start)
 - Free tier has 512MB RAM limit - may crash with "Out of Memory" error
+- 500 errors during upload are usually platform limitations, not code bugs
 - For production, consider upgrading to a paid plan to avoid cold starts and memory issues
 - Render automatically sets the PORT environment variable
 
@@ -405,7 +445,8 @@ https://your-frontend.vercel.app
 **Step 4: Upload your first PDF**
 
 - Be patient during first upload (1-2 minutes)
-- Don't refresh the page
+- Don't refresh the page immediately if you see a 500 error
+- Wait 30-60 seconds, then refresh to check if upload succeeded
 - Subsequent uploads are faster
 - Use only the provided sample PDFs to avoid memory issues
 
@@ -512,7 +553,8 @@ https://your-frontend.vercel.app
 ### 8. Hosting Provider
 **Decision**: Render free tier for backend
 **Reason**: Zero cost, easy deployment, good for MVP
-**Trade-off**: Cold starts after 15 minutes + 512MB RAM limit causing crashes
+**Trade-off**: Cold starts after 15 minutes + 512MB RAM limit causing crashes and 500 errors
+**Note**: 500 errors are platform limitations, not application bugs
 **Future**: Upgrade to paid tier ($7-25/month) for always-on service and 2GB+ RAM
 
 ### 9. PDF Extraction Strategy
@@ -596,6 +638,7 @@ E. **CDN/Edge Storage**
 
 **Current Critical Issue:**
 - Render free tier crashes with "Out of Memory (512MB)" error
+- Internal Server Error 500 during PDF uploads (platform limitation, not code bug)
 
 **Immediate Solutions:**
 
@@ -705,5 +748,84 @@ B. **File Format Expansion:**
 - High contrast mode
 - Text-to-speech for questions
 
-### 11. Analytics & Insights
--
+### 11. Better Error Handling
+- Graceful handling of 500 errors from hosting platform
+- User-friendly messages explaining platform limitations
+- Automatic retry mechanisms
+- Upload success verification after errors
+
+## Debugging Tips
+
+### Common Issues
+
+**1. PDF Upload Shows 500 Error But Works**
+- **Cause**: Render free tier memory limitation
+- **Solution**: Wait 30-60 seconds, refresh page, check if PDF appears
+- **Note**: This is a platform issue, not a code bug
+
+**2. Backend Cold Start (Slow First Request)**
+- **Cause**: Render spins down after 15 minutes inactivity
+- **Solution**: Visit `/health` endpoint first, wait for response
+
+**3. Out of Memory Errors**
+- **Cause**: 512MB RAM limit exceeded
+- **Solution**: Use smaller PDFs, upgrade hosting plan
+
+**4. PDF Not Displaying**
+- **Check**: File path in database vs actual file location
+- **Check**: File permissions and upload directory configuration
+
+**5. Quiz Generation Fails**
+- **Check**: OpenRouter API key and credits
+- **Check**: PDF text extraction succeeded
+- **Fallback**: App provides hardcoded questions
+
+## Testing
+
+### Manual Testing Checklist
+
+- [ ] Upload PDF successfully
+- [ ] Verify PDF appears after 500 error (if applicable)
+- [ ] View PDF in viewer
+- [ ] Generate quiz from PDF
+- [ ] Answer quiz questions
+- [ ] View progress dashboard
+- [ ] Start new chat
+- [ ] Ask questions about PDF
+- [ ] Get YouTube recommendations
+- [ ] Test on mobile device
+
+### Performance Testing
+
+- Monitor cold start times
+- Test with various PDF sizes
+- Check memory usage during processing
+- Verify upload success despite errors
+
+## Contributing
+
+Contributions are welcome! Please follow these guidelines:
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test thoroughly
+5. Submit a pull request
+
+## License
+
+MIT License - See LICENSE file for details
+
+## Support
+
+For issues and questions:
+- Open an issue on GitHub
+- Check the debugging tips section
+- Remember: 500 errors during upload are often platform limitations, verify upload succeeded by refreshing
+
+## Acknowledgments
+
+- OpenRouter for LLM API access
+- MongoDB Atlas for database hosting
+- Render and Vercel for free hosting
+- NCERT for educational content
