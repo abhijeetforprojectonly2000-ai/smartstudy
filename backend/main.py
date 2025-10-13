@@ -35,10 +35,15 @@ DATABASE_NAME = os.getenv("DATABASE_NAME", "beyondchats_db")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "your_key_here")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 MODEL_NAME = "openai/gpt-3.5-turbo"
-UPLOAD_DIR = "./uploads"
+
+Use absolute path and handle Render environment
+UPLOAD_DIR = os.getenv("UPLOAD_DIR", "/tmp/uploads")
+if not os.path.isabs(UPLOAD_DIR):
+    UPLOAD_DIR = os.path.abspath(UPLOAD_DIR)
 
 # Create upload directory
-Path(UPLOAD_DIR).mkdir(exist_ok=True)
+Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
+print(f"📁 Upload directory: {UPLOAD_DIR}")
 
 # ============================================================================
 # DATABASE CONNECTION
@@ -168,14 +173,14 @@ def extract_text_from_pdf(pdf_path: str) -> Dict[str, str]:
         return pages_text
     
     # Fallback to PyMuPDF (good for scanned PDFs)
-    print("🔄 Trying PyMuPDF...")
+    print("📄 Trying PyMuPDF...")
     pages_text = extract_text_with_pymupdf(pdf_path)
     if pages_text:
         print(f"✅ Extracted {len(pages_text)} pages using PyMuPDF")
         return pages_text
     
     # Final fallback to PyPDF2
-    print("🔄 Trying PyPDF2...")
+    print("📄 Trying PyPDF2...")
     pages_text = extract_text_with_pypdf2(pdf_path)
     if pages_text:
         print(f"✅ Extracted {len(pages_text)} pages using PyPDF2")
@@ -322,12 +327,14 @@ async def startup_event():
     print("="*60)
     print(f"🗄️  Database: {DATABASE_NAME}")
     print(f"📁 Upload Directory: {UPLOAD_DIR}")
+    print(f"✅ Upload Directory Exists: {os.path.isdir(UPLOAD_DIR)}")
+    print(f"✅ Upload Directory Writable: {os.access(UPLOAD_DIR, os.W_OK)}")
     
     # Check API key without exposing it
     if OPENROUTER_API_KEY == "your_key_here" or not OPENROUTER_API_KEY:
         print("⚠️  OpenRouter API Key: NOT SET")
-        print("   → Set OPENROUTER_API_KEY in .env file or environment variable")
-        print("   → Get your key at: https://openrouter.ai/keys")
+        print("   ↓ Set OPENROUTER_API_KEY in .env file or environment variable")
+        print("   ↓ Get your key at: https://openrouter.ai/keys")
     else:
         print("✅ OpenRouter API Key: Configured")
     
@@ -364,6 +371,7 @@ async def upload_pdf(file: UploadFile = File(...)):
                 buffer.write(chunk)
         
         print(f"📥 Saved PDF: {file.filename} ({file_size / 1024:.2f} KB)")
+        print(f"📍 File path: {file_path}")
         
         # Extract text with improved method
         pages_text = extract_text_from_pdf(file_path)
@@ -430,6 +438,7 @@ async def list_pdfs():
                 "total_pages": pdf["total_pages"],
                 "file_size": pdf.get("file_size", 0),
                 "is_image_based": pdf.get("is_image_based", False),
+                "file_exists": os.path.exists(pdf.get("file_path", "")),
                 "uploaded_at": pdf["uploaded_at"].isoformat()
             }
             for pdf in pdfs
@@ -438,13 +447,37 @@ async def list_pdfs():
 
 @app.get("/api/pdf/{pdf_id}")
 async def get_pdf(pdf_id: str):
-    """Get PDF file"""
-    pdf = await get_database()["pdfs"].find_one({"_id": ObjectId(pdf_id)})
-    
-    if not pdf:
-        raise HTTPException(status_code=404, detail="PDF not found")
-    
-    return FileResponse(pdf["file_path"], media_type="application/pdf", filename=pdf["filename"])
+    """Get PDF file (Proper error handling and path validation)"""
+    try:
+        pdf = await get_database()["pdfs"].find_one({"_id": ObjectId(pdf_id)})
+        
+        if not pdf:
+            raise HTTPException(status_code=404, detail="PDF not found in database")
+        
+        file_path = pdf.get("file_path")
+        
+        # FIX: Check if file exists
+        if not file_path or not os.path.exists(file_path):
+            print(f"❌ PDF file not found: {file_path}")
+            raise HTTPException(
+                status_code=404, 
+                detail=f"PDF file not found on disk. File path: {file_path}"
+            )
+        
+        # FIX: Verify file is readable
+        if not os.access(file_path, os.R_OK):
+            raise HTTPException(status_code=403, detail="PDF file is not readable")
+        
+        return FileResponse(
+            path=file_path,
+            media_type="application/pdf",
+            filename=pdf.get("filename", "document.pdf")
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error retrieving PDF: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving PDF: {str(e)}")
 
 @app.get("/api/pdf/{pdf_id}/text")
 async def get_pdf_text(pdf_id: str):
@@ -469,8 +502,13 @@ async def delete_pdf(pdf_id: str):
         raise HTTPException(status_code=404, detail="PDF not found")
     
     # Delete file
-    if os.path.exists(pdf["file_path"]):
-        os.remove(pdf["file_path"])
+    file_path = pdf.get("file_path")
+    if file_path and os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+            print(f"✅ Deleted file: {file_path}")
+        except Exception as e:
+            print(f"⚠️  Could not delete file {file_path}: {str(e)}")
     
     # Delete from database
     await get_database()["pdfs"].delete_one({"_id": ObjectId(pdf_id)})
