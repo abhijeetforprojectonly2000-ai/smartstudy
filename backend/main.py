@@ -36,7 +36,7 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "your_key_here")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 MODEL_NAME = "openai/gpt-3.5-turbo"
 
-Use absolute path and handle Render environment
+#Use absolute path and handle Render environment
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "/tmp/uploads")
 if not os.path.isabs(UPLOAD_DIR):
     UPLOAD_DIR = os.path.abspath(UPLOAD_DIR)
@@ -327,8 +327,16 @@ async def startup_event():
     print("="*60)
     print(f"🗄️  Database: {DATABASE_NAME}")
     print(f"📁 Upload Directory: {UPLOAD_DIR}")
-    print(f"✅ Upload Directory Exists: {os.path.isdir(UPLOAD_DIR)}")
-    print(f"✅ Upload Directory Writable: {os.access(UPLOAD_DIR, os.W_OK)}")
+    print(f"   Absolute Path: {os.path.isabs(UPLOAD_DIR)}")
+    print(f"   Directory Exists: {os.path.isdir(UPLOAD_DIR)}")
+    
+    if os.path.isdir(UPLOAD_DIR):
+        writable = os.access(UPLOAD_DIR, os.W_OK)
+        print(f"   Directory Writable: {writable}")
+        if not writable:
+            print("   ⚠️  WARNING: Upload directory is not writable!")
+    else:
+        print("   ❌ ERROR: Upload directory does not exist!")
     
     # Check API key without exposing it
     if OPENROUTER_API_KEY == "your_key_here" or not OPENROUTER_API_KEY:
@@ -338,6 +346,9 @@ async def startup_event():
     else:
         print("✅ OpenRouter API Key: Configured")
     
+    print("="*60)
+    print("✅ Backend is ready!")
+    print("📊 Visit /api/diagnostics to check system health")
     print("="*60 + "\n")
 
 @app.on_event("shutdown")
@@ -447,7 +458,7 @@ async def list_pdfs():
 
 @app.get("/api/pdf/{pdf_id}")
 async def get_pdf(pdf_id: str):
-    """Get PDF file (Proper error handling and path validation)"""
+    """Get PDF file (FIXED: Proper error handling and path validation)"""
     try:
         pdf = await get_database()["pdfs"].find_one({"_id": ObjectId(pdf_id)})
         
@@ -457,19 +468,29 @@ async def get_pdf(pdf_id: str):
         file_path = pdf.get("file_path")
         
         # FIX: Check if file exists
-        if not file_path or not os.path.exists(file_path):
+        if not file_path:
+            raise HTTPException(status_code=500, detail="File path not stored in database")
+        
+        if not os.path.exists(file_path):
             print(f"❌ PDF file not found: {file_path}")
             raise HTTPException(
                 status_code=404, 
-                detail=f"PDF file not found on disk. File path: {file_path}"
+                detail=f"PDF file not found on disk"
             )
         
         # FIX: Verify file is readable
         if not os.access(file_path, os.R_OK):
             raise HTTPException(status_code=403, detail="PDF file is not readable")
         
+        # FIX: Use absolute path and verify it's secure
+        abs_path = os.path.abspath(file_path)
+        if not abs_path.startswith(os.path.abspath(UPLOAD_DIR)):
+            raise HTTPException(status_code=403, detail="Invalid file path")
+        
+        print(f"📥 Serving PDF: {abs_path}")
+        
         return FileResponse(
-            path=file_path,
+            path=abs_path,
             media_type="application/pdf",
             filename=pdf.get("filename", "document.pdf")
         )
@@ -477,6 +498,8 @@ async def get_pdf(pdf_id: str):
         raise
     except Exception as e:
         print(f"❌ Error retrieving PDF: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error retrieving PDF: {str(e)}")
 
 @app.get("/api/pdf/{pdf_id}/text")
@@ -536,7 +559,11 @@ async def generate_quiz(request: QuizGenerateRequest):
                 )
             
             # Combine all pages text
-            all_text = " ".join(pdf["pages_text"].values())
+            pages_text = pdf.get("pages_text", {})
+            if not pages_text:
+                raise HTTPException(status_code=422, detail="PDF has no extractable text")
+            
+            all_text = " ".join(pages_text.values())
             context = all_text[:4000]  # Limit context
         else:
             context = "General Physics topics from Class XI NCERT"
@@ -943,7 +970,7 @@ Only respond with the JSON array, no additional text."""
         raise HTTPException(status_code=500, detail=f"YouTube recommendation failed: {str(e)}")
 
 # ============================================================================
-# HEALTH CHECK
+# HEALTH CHECK & DIAGNOSTICS
 # ============================================================================
 @app.get("/")
 async def root():
@@ -951,7 +978,59 @@ async def root():
 
 @app.get("/health")
 async def health():
+    """Health check endpoint"""
     return {"status": "healthy"}
+
+@app.get("/api/diagnostics")
+async def diagnostics():
+    """Diagnose system health"""
+    try:
+        db_status = "connected" if db.client else "disconnected"
+        
+        # Test database
+        try:
+            await db.client.admin.command('ping')
+            db_ping = "✅ OK"
+        except:
+            db_ping = "❌ Failed"
+        
+        # Check upload directory
+        upload_exists = os.path.exists(UPLOAD_DIR)
+        upload_writable = os.access(UPLOAD_DIR, os.W_OK) if upload_exists else False
+        
+        # Count PDFs
+        pdf_count = 0
+        try:
+            pdf_count = await get_database()["pdfs"].count_documents({})
+        except:
+            pass
+        
+        return {
+            "status": "healthy",
+            "database": {
+                "status": db_status,
+                "ping": db_ping,
+                "database_name": DATABASE_NAME
+            },
+            "storage": {
+                "upload_directory": UPLOAD_DIR,
+                "exists": upload_exists,
+                "writable": upload_writable,
+                "is_absolute_path": os.path.isabs(UPLOAD_DIR)
+            },
+            "files": {
+                "total_pdfs": pdf_count
+            },
+            "configuration": {
+                "has_openrouter_key": OPENROUTER_API_KEY != "your_key_here" and bool(OPENROUTER_API_KEY)
+            }
+        }
+    except Exception as e:
+        print(f"❌ Diagnostics error: {str(e)}")
+        return {
+            "status": "error",
+            "error": str(e)
+        }
 
 if __name__ == "__main__":
     import uvicorn
