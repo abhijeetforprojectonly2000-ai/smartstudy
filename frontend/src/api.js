@@ -33,6 +33,11 @@ export const getPDFText = async (pdfId) => {
   return response.data;
 };
 
+export const deletePDF = async (pdfId) => {
+  const response = await api.delete(`/api/pdf/${pdfId}`);
+  return response.data;
+};
+
 // Quiz APIs
 export const generateQuiz = async (pdfId, numMcq = 5, numSaq = 3, numLaq = 2) => {
   const response = await api.post('/api/quiz/generate', {
@@ -69,6 +74,11 @@ export const getChatHistory = async () => {
 
 export const getChat = async (chatId) => {
   const response = await api.get(`/api/chat/${chatId}`);
+  return response.data;
+};
+
+export const deleteChat = async (chatId) => {
+  const response = await api.delete(`/api/chat/${chatId}`);
   return response.data;
 };
 
