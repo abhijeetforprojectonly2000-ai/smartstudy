@@ -35,15 +35,10 @@ DATABASE_NAME = os.getenv("DATABASE_NAME", "beyondchats_db")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "your_key_here")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 MODEL_NAME = "openai/gpt-3.5-turbo"
-
-#Use absolute path and handle Render environment
-UPLOAD_DIR = os.getenv("UPLOAD_DIR", "/tmp/uploads")
-if not os.path.isabs(UPLOAD_DIR):
-    UPLOAD_DIR = os.path.abspath(UPLOAD_DIR)
+UPLOAD_DIR = "./uploads"
 
 # Create upload directory
-Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
-print(f"📁 Upload directory: {UPLOAD_DIR}")
+Path(UPLOAD_DIR).mkdir(exist_ok=True)
 
 # ============================================================================
 # DATABASE CONNECTION
@@ -124,7 +119,7 @@ def extract_text_with_pdfplumber(pdf_path: str) -> Dict[str, str]:
         with pdfplumber.open(pdf_path) as pdf:
             for i, page in enumerate(pdf.pages):
                 text = page.extract_text() or ""
-                if text.strip():  # Only add if there's actual text
+                if text.strip():
                     pages_text[str(i + 1)] = text
         return pages_text
     except Exception as e:
@@ -166,42 +161,37 @@ def extract_text_from_pdf(pdf_path: str) -> Dict[str, str]:
     """Extract text from PDF using multiple methods as fallback"""
     print(f"📄 Attempting to extract text from: {pdf_path}")
     
-    # Try pdfplumber first (best for most PDFs)
     pages_text = extract_text_with_pdfplumber(pdf_path)
     if pages_text:
         print(f"✅ Extracted {len(pages_text)} pages using pdfplumber")
         return pages_text
     
-    # Fallback to PyMuPDF (good for scanned PDFs)
-    print("📄 Trying PyMuPDF...")
+    print("🔄 Trying PyMuPDF...")
     pages_text = extract_text_with_pymupdf(pdf_path)
     if pages_text:
         print(f"✅ Extracted {len(pages_text)} pages using PyMuPDF")
         return pages_text
     
-    # Final fallback to PyPDF2
-    print("📄 Trying PyPDF2...")
+    print("🔄 Trying PyPDF2...")
     pages_text = extract_text_with_pypdf2(pdf_path)
     if pages_text:
         print(f"✅ Extracted {len(pages_text)} pages using PyPDF2")
         return pages_text
     
-    # If all methods fail, check if PDF has pages but no text (image-based PDF)
     try:
         doc = fitz.open(pdf_path)
         total_pages = len(doc)
         doc.close()
         
         if total_pages > 0:
-            print(f"⚠️  PDF has {total_pages} pages but no extractable text (might be image-based)")
-            # Return empty pages to indicate structure exists
+            print(f"⚠️  PDF has {total_pages} pages but no extractable text")
             return {str(i + 1): "[Image-based page - OCR needed]" for i in range(total_pages)}
     except:
         pass
     
     raise HTTPException(
         status_code=422, 
-        detail="Unable to extract text from PDF. The file might be corrupted, password-protected, or image-based. Please try a different PDF or use OCR."
+        detail="Unable to extract text from PDF. The file might be corrupted, password-protected, or image-based."
     )
 
 def chunk_text(text: str, chunk_size: int = 1000) -> List[str]:
@@ -228,12 +218,10 @@ def chunk_text(text: str, chunk_size: int = 1000) -> List[str]:
 async def call_llm(prompt: str, system_prompt: str = "You are a helpful AI assistant.") -> str:
     """Call OpenRouter API (GPT-3.5) using httpx"""
     try:
-        # Check if API key is set
         if OPENROUTER_API_KEY == "your_key_here" or not OPENROUTER_API_KEY:
             print("⚠️  Warning: OpenRouter API key not set. Using fallback responses.")
             return "This is a fallback response. Please set OPENROUTER_API_KEY environment variable."
         
-        # Direct HTTP request to OpenRouter
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{OPENROUTER_BASE_URL}/chat/completions",
@@ -268,7 +256,7 @@ async def call_llm(prompt: str, system_prompt: str = "You are a helpful AI assis
         print(f"❌ LLM API Error: {str(e)}")
         import traceback
         traceback.print_exc()
-        return f"I'm currently unable to connect to the AI service. Please try again later."
+        return "I'm currently unable to connect to the AI service. Please try again later."
 
 def find_citations(query: str, pages_text: Dict[str, str], top_k: int = 3) -> List[Dict]:
     """Simple keyword-based citation search"""
@@ -277,16 +265,14 @@ def find_citations(query: str, pages_text: Dict[str, str], top_k: int = 3) -> Li
     
     for page_num, text in pages_text.items():
         text_lower = text.lower()
-        # Count matching words
         matches = sum(1 for word in query_words if word in text_lower)
         
         if matches > 0:
-            # Extract snippet
             sentences = text.split('.')
             best_sentence = ""
             max_matches = 0
             
-            for sentence in sentences[:10]:  # Check first 10 sentences
+            for sentence in sentences[:10]:
                 sent_matches = sum(1 for word in query_words if word in sentence.lower())
                 if sent_matches > max_matches:
                     max_matches = sent_matches
@@ -299,7 +285,6 @@ def find_citations(query: str, pages_text: Dict[str, str], top_k: int = 3) -> Li
                     "relevance": matches
                 })
     
-    # Sort by relevance and return top_k
     citations.sort(key=lambda x: x["relevance"], reverse=True)
     return citations[:top_k]
 
@@ -308,7 +293,6 @@ def find_citations(query: str, pages_text: Dict[str, str], top_k: int = 3) -> Li
 # ============================================================================
 app = FastAPI(title="BeyondChats Backend", version="1.0.0")
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -321,34 +305,18 @@ app.add_middleware(
 async def startup_event():
     await connect_db()
     
-    # Print configuration status (production-safe)
     print("\n" + "="*60)
     print("🚀 BeyondChats Backend Starting...")
     print("="*60)
     print(f"🗄️  Database: {DATABASE_NAME}")
     print(f"📁 Upload Directory: {UPLOAD_DIR}")
-    print(f"   Absolute Path: {os.path.isabs(UPLOAD_DIR)}")
-    print(f"   Directory Exists: {os.path.isdir(UPLOAD_DIR)}")
     
-    if os.path.isdir(UPLOAD_DIR):
-        writable = os.access(UPLOAD_DIR, os.W_OK)
-        print(f"   Directory Writable: {writable}")
-        if not writable:
-            print("   ⚠️  WARNING: Upload directory is not writable!")
-    else:
-        print("   ❌ ERROR: Upload directory does not exist!")
-    
-    # Check API key without exposing it
     if OPENROUTER_API_KEY == "your_key_here" or not OPENROUTER_API_KEY:
         print("⚠️  OpenRouter API Key: NOT SET")
-        print("   ↓ Set OPENROUTER_API_KEY in .env file or environment variable")
-        print("   ↓ Get your key at: https://openrouter.ai/keys")
+        print("   → Set OPENROUTER_API_KEY in .env file")
     else:
         print("✅ OpenRouter API Key: Configured")
     
-    print("="*60)
-    print("✅ Backend is ready!")
-    print("📊 Visit /api/diagnostics to check system health")
     print("="*60 + "\n")
 
 @app.on_event("shutdown")
@@ -356,51 +324,49 @@ async def shutdown_event():
     await close_db()
 
 # ============================================================================
+# HEALTH CHECK
+# ============================================================================
+@app.get("/")
+async def root():
+    return {"message": "BeyondChats Backend API", "status": "running"}
+
+@app.get("/health")
+async def health():
+    return {"status": "healthy"}
+
+# ============================================================================
 # PDF ROUTES 
 # ============================================================================
 @app.post("/api/pdf/upload")
 async def upload_pdf(file: UploadFile = File(...)):
-    """Upload and process a PDF with improved extraction"""
-    # Validate file type
+    """Upload and process a PDF"""
     if not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
     
-    # Validate file size (max 50MB)
     file_size = 0
     pdf_id = str(ObjectId())
     file_path = os.path.join(UPLOAD_DIR, f"{pdf_id}.pdf")
     
     try:
-        # Save file with size check
         with open(file_path, "wb") as buffer:
-            while chunk := await file.read(1024 * 1024):  # Read 1MB at a time
+            while chunk := await file.read(1024 * 1024):
                 file_size += len(chunk)
-                if file_size > 50 * 1024 * 1024:  # 50MB limit
+                if file_size > 50 * 1024 * 1024:
                     buffer.close()
                     os.remove(file_path)
                     raise HTTPException(status_code=413, detail="File too large. Maximum size is 50MB")
                 buffer.write(chunk)
         
         print(f"📥 Saved PDF: {file.filename} ({file_size / 1024:.2f} KB)")
-        print(f"📍 File path: {file_path}")
         
-        # Extract text with improved method
         pages_text = extract_text_from_pdf(file_path)
         
         if not pages_text:
             os.remove(file_path)
-            raise HTTPException(
-                status_code=422,
-                detail="No text could be extracted from this PDF. It might be image-based or corrupted."
-            )
+            raise HTTPException(status_code=422, detail="No text could be extracted from this PDF.")
         
-        # Check if it's an image-based PDF
-        has_real_text = any(
-            "[Image-based page" not in text 
-            for text in pages_text.values()
-        )
+        has_real_text = any("[Image-based page" not in text for text in pages_text.values())
         
-        # Store in MongoDB
         pdf_doc = {
             "_id": ObjectId(pdf_id),
             "filename": file.filename,
@@ -422,13 +388,12 @@ async def upload_pdf(file: UploadFile = File(...)):
             "total_pages": len(pages_text),
             "file_size": file_size,
             "is_image_based": not has_real_text,
-            "message": "PDF uploaded and processed successfully" if has_real_text else "PDF uploaded but appears to be image-based. OCR might be needed for best results."
+            "message": "PDF uploaded successfully"
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        # Cleanup on error
         if os.path.exists(file_path):
             os.remove(file_path)
         print(f"❌ PDF upload error: {str(e)}")
@@ -449,7 +414,6 @@ async def list_pdfs():
                 "total_pages": pdf["total_pages"],
                 "file_size": pdf.get("file_size", 0),
                 "is_image_based": pdf.get("is_image_based", False),
-                "file_exists": os.path.exists(pdf.get("file_path", "")),
                 "uploaded_at": pdf["uploaded_at"].isoformat()
             }
             for pdf in pdfs
@@ -458,49 +422,13 @@ async def list_pdfs():
 
 @app.get("/api/pdf/{pdf_id}")
 async def get_pdf(pdf_id: str):
-    """Get PDF file (FIXED: Proper error handling and path validation)"""
-    try:
-        pdf = await get_database()["pdfs"].find_one({"_id": ObjectId(pdf_id)})
-        
-        if not pdf:
-            raise HTTPException(status_code=404, detail="PDF not found in database")
-        
-        file_path = pdf.get("file_path")
-        
-        # FIX: Check if file exists
-        if not file_path:
-            raise HTTPException(status_code=500, detail="File path not stored in database")
-        
-        if not os.path.exists(file_path):
-            print(f"❌ PDF file not found: {file_path}")
-            raise HTTPException(
-                status_code=404, 
-                detail=f"PDF file not found on disk"
-            )
-        
-        # FIX: Verify file is readable
-        if not os.access(file_path, os.R_OK):
-            raise HTTPException(status_code=403, detail="PDF file is not readable")
-        
-        # FIX: Use absolute path and verify it's secure
-        abs_path = os.path.abspath(file_path)
-        if not abs_path.startswith(os.path.abspath(UPLOAD_DIR)):
-            raise HTTPException(status_code=403, detail="Invalid file path")
-        
-        print(f"📥 Serving PDF: {abs_path}")
-        
-        return FileResponse(
-            path=abs_path,
-            media_type="application/pdf",
-            filename=pdf.get("filename", "document.pdf")
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"❌ Error retrieving PDF: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Error retrieving PDF: {str(e)}")
+    """Get PDF file"""
+    pdf = await get_database()["pdfs"].find_one({"_id": ObjectId(pdf_id)})
+    
+    if not pdf:
+        raise HTTPException(status_code=404, detail="PDF not found")
+    
+    return FileResponse(pdf["file_path"], media_type="application/pdf", filename=pdf["filename"])
 
 @app.get("/api/pdf/{pdf_id}/text")
 async def get_pdf_text(pdf_id: str):
@@ -524,16 +452,9 @@ async def delete_pdf(pdf_id: str):
     if not pdf:
         raise HTTPException(status_code=404, detail="PDF not found")
     
-    # Delete file
-    file_path = pdf.get("file_path")
-    if file_path and os.path.exists(file_path):
-        try:
-            os.remove(file_path)
-            print(f"✅ Deleted file: {file_path}")
-        except Exception as e:
-            print(f"⚠️  Could not delete file {file_path}: {str(e)}")
+    if os.path.exists(pdf["file_path"]):
+        os.remove(pdf["file_path"])
     
-    # Delete from database
     await get_database()["pdfs"].delete_one({"_id": ObjectId(pdf_id)})
     
     return {"message": "PDF deleted successfully"}
@@ -545,30 +466,19 @@ async def delete_pdf(pdf_id: str):
 async def generate_quiz(request: QuizGenerateRequest):
     """Generate quiz questions from PDF"""
     try:
-        # Get PDF content
         if request.pdf_id:
             pdf = await get_database()["pdfs"].find_one({"_id": ObjectId(request.pdf_id)})
             if not pdf:
                 raise HTTPException(status_code=404, detail="PDF not found")
             
-            # Check if image-based
             if pdf.get("is_image_based", False):
-                raise HTTPException(
-                    status_code=422,
-                    detail="Cannot generate quiz from image-based PDF. Please use a text-based PDF."
-                )
+                raise HTTPException(status_code=422, detail="Cannot generate quiz from image-based PDF.")
             
-            # Combine all pages text
-            pages_text = pdf.get("pages_text", {})
-            if not pages_text:
-                raise HTTPException(status_code=422, detail="PDF has no extractable text")
-            
-            all_text = " ".join(pages_text.values())
-            context = all_text[:4000]  # Limit context
+            all_text = " ".join(pdf["pages_text"].values())
+            context = all_text[:4000]
         else:
             context = "General Physics topics from Class XI NCERT"
         
-        # Generate questions using LLM
         prompt = f"""Based on the following content, generate quiz questions:
 
 Content: {context}
@@ -578,69 +488,44 @@ Generate exactly:
 - {request.num_saq} Short Answer Questions (SAQ)
 - {request.num_laq} Long Answer Questions (LAQ)
 
-Format your response as a JSON array with this structure:
+Format as JSON array:
 [
   {{
     "question": "question text",
     "question_type": "MCQ|SAQ|LAQ",
     "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
-    "correct_answer": "correct answer text",
-    "explanation": "detailed explanation"
+    "correct_answer": "correct answer",
+    "explanation": "explanation"
   }}
 ]
 
-Important:
-- For MCQ, always include 4 options in the array
-- For SAQ and LAQ, set options to null or empty array
-- Ensure valid JSON format
-- Questions should test understanding of the content"""
+For MCQ include 4 options, for SAQ/LAQ set options to null."""
 
-        system_prompt = "You are an expert teacher creating educational quiz questions. Always respond with valid JSON only, no additional text."
+        system_prompt = "You are an expert teacher. Respond with valid JSON only."
         
         response = await call_llm(prompt, system_prompt)
         
         try:
-            # Try to extract JSON from response if it contains extra text
             response = response.strip()
             if not response.startswith('['):
-                # Try to find JSON array in response
                 start = response.find('[')
                 end = response.rfind(']') + 1
                 if start != -1 and end > start:
                     response = response[start:end]
             
-            # Parse JSON response
             questions_data = json.loads(response)
             questions = [QuizQuestion(**q) for q in questions_data]
-        except Exception as parse_error:
-            print(f"⚠️  Failed to parse LLM response: {parse_error}")
-            print(f"Response was: {response[:500]}")
-            # Fallback if parsing fails
+        except:
             questions = [
                 QuizQuestion(
                     question="What is the SI unit of force?",
                     question_type="MCQ",
                     options=["A) Newton", "B) Joule", "C) Watt", "D) Pascal"],
                     correct_answer="A) Newton",
-                    explanation="The SI unit of force is Newton (N), named after Sir Isaac Newton."
-                ),
-                QuizQuestion(
-                    question="Explain Newton's First Law of Motion.",
-                    question_type="SAQ",
-                    options=None,
-                    correct_answer="An object at rest stays at rest and an object in motion stays in motion unless acted upon by an external force.",
-                    explanation="This is also known as the law of inertia."
-                ),
-                QuizQuestion(
-                    question="Describe the relationship between force, mass, and acceleration.",
-                    question_type="LAQ",
-                    options=None,
-                    correct_answer="Force equals mass times acceleration (F=ma). This means that the force applied to an object is directly proportional to its mass and acceleration.",
-                    explanation="This is Newton's Second Law of Motion."
+                    explanation="The SI unit of force is Newton (N)."
                 )
             ]
         
-        # Store quiz in database
         quiz_id = str(ObjectId())
         quiz_doc = {
             "_id": ObjectId(quiz_id),
@@ -660,14 +545,11 @@ Important:
         raise
     except Exception as e:
         print(f"❌ Quiz generation error: {str(e)}")
-        import traceback
-        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Quiz generation failed: {str(e)}")
 
 @app.post("/api/quiz/submit")
 async def submit_quiz(request: QuizSubmitRequest):
-    """Submit quiz answers and get results"""
-    # Get quiz
+    """Submit quiz answers"""
     quiz = await get_database()["quizzes"].find_one({"_id": ObjectId(request.quiz_id)})
     
     if not quiz:
@@ -677,15 +559,12 @@ async def submit_quiz(request: QuizSubmitRequest):
     results = []
     correct_count = 0
     
-    # Create answer map
     answer_map = {ans.question_index: ans.user_answer for ans in request.answers}
     
-    # Evaluate answers
     for idx, question in enumerate(questions):
         user_answer = answer_map.get(idx, "")
         correct_answer = question["correct_answer"]
         
-        # Simple matching (case-insensitive)
         is_correct = user_answer.strip().lower() == correct_answer.strip().lower()
         
         if is_correct:
@@ -702,7 +581,6 @@ async def submit_quiz(request: QuizSubmitRequest):
     
     score_percentage = (correct_count / len(questions)) * 100 if questions else 0
     
-    # Store attempt
     attempt_doc = {
         "quiz_id": request.quiz_id,
         "total_questions": len(questions),
@@ -729,7 +607,6 @@ async def submit_quiz(request: QuizSubmitRequest):
 async def chat(request: ChatRequest):
     """Chat with AI teacher"""
     try:
-        # Get or create chat
         if request.chat_id:
             chat_doc = await get_database()["chats"].find_one({"_id": ObjectId(request.chat_id)})
             if not chat_doc:
@@ -746,7 +623,6 @@ async def chat(request: ChatRequest):
             }
             request.chat_id = chat_id
         
-        # Get PDF context if provided
         citations = []
         context = ""
         
@@ -757,28 +633,23 @@ async def chat(request: ChatRequest):
                 citations = find_citations(request.message, pages_text)
                 
                 if citations:
-                    context = "\n\n".join([
-                        f"[Page {c['page']}]: {c['snippet']}" 
-                        for c in citations
-                    ])
+                    context = "\n\n".join([f"[Page {c['page']}]: {c['snippet']}" for c in citations])
         
-        # Build prompt
         if context:
-            prompt = f"""Based on the following excerpts from the textbook, answer the student's question:
+            prompt = f"""Based on these excerpts:
 
 {context}
 
 Student's question: {request.message}
 
-Provide a helpful, educational response. If the excerpts are relevant, reference them naturally."""
+Provide a helpful educational response."""
         else:
-            prompt = f"Student's question: {request.message}\n\nProvide a helpful, educational response as a teacher."
+            prompt = f"Student's question: {request.message}\n\nProvide a helpful response."
         
-        system_prompt = "You are a knowledgeable and patient teacher helping students learn. Be clear, encouraging, and educational."
+        system_prompt = "You are a knowledgeable teacher. Be clear and encouraging."
         
         response_text = await call_llm(prompt, system_prompt)
         
-        # Add messages
         messages.append({
             "role": "user",
             "content": request.message,
@@ -792,7 +663,6 @@ Provide a helpful, educational response. If the excerpts are relevant, reference
             "timestamp": datetime.utcnow()
         })
         
-        # Update chat
         await get_database()["chats"].update_one(
             {"_id": ObjectId(request.chat_id)},
             {"$set": {"messages": messages, "updated_at": datetime.utcnow()}},
@@ -808,8 +678,6 @@ Provide a helpful, educational response. If the excerpts are relevant, reference
         raise
     except Exception as e:
         print(f"❌ Chat error: {str(e)}")
-        import traceback
-        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
 
 @app.get("/api/chat/history")
@@ -824,8 +692,8 @@ async def get_chat_history():
                 "pdf_id": chat.get("pdf_id"),
                 "message_count": len(chat.get("messages", [])),
                 "last_message": chat["messages"][-1]["content"][:100] if chat.get("messages") else "",
-                "created_at": chat.get("created_at", datetime.utcnow()).isoformat() if isinstance(chat.get("created_at"), datetime) else datetime.utcnow().isoformat(),
-                "updated_at": chat.get("updated_at", chat.get("created_at", datetime.utcnow())).isoformat() if isinstance(chat.get("updated_at", chat.get("created_at")), datetime) else datetime.utcnow().isoformat()
+                "created_at": chat.get("created_at", datetime.utcnow()).isoformat(),
+                "updated_at": chat.get("updated_at", chat.get("created_at", datetime.utcnow())).isoformat()
             }
             for chat in chats
         ]
@@ -833,14 +701,13 @@ async def get_chat_history():
 
 @app.get("/api/chat/{chat_id}")
 async def get_chat(chat_id: str):
-    """Get specific chat with all messages"""
+    """Get specific chat"""
     try:
         chat = await get_database()["chats"].find_one({"_id": ObjectId(chat_id)})
         
         if not chat:
             raise HTTPException(status_code=404, detail="Chat not found")
         
-        # Ensure messages have proper structure
         messages = chat.get("messages", [])
         formatted_messages = []
         
@@ -848,7 +715,7 @@ async def get_chat(chat_id: str):
             formatted_msg = {
                 "role": msg.get("role", "user"),
                 "content": msg.get("content", ""),
-                "timestamp": msg.get("timestamp", datetime.utcnow()).isoformat() if isinstance(msg.get("timestamp"), datetime) else datetime.utcnow().isoformat()
+                "timestamp": msg.get("timestamp", datetime.utcnow()).isoformat()
             }
             if "citations" in msg and msg["citations"]:
                 formatted_msg["citations"] = msg["citations"]
@@ -861,16 +728,24 @@ async def get_chat(chat_id: str):
         }
     except Exception as e:
         print(f"❌ Error fetching chat: {str(e)}")
-        import traceback
-        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to fetch chat: {str(e)}")
+
+@app.delete("/api/chat/{chat_id}")
+async def delete_chat(chat_id: str):
+    """Delete a chat"""
+    result = await get_database()["chats"].delete_one({"_id": ObjectId(chat_id)})
+    
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    
+    return {"message": "Chat deleted successfully"}
 
 # ============================================================================
 # PROGRESS ROUTES
 # ============================================================================
 @app.get("/api/progress")
 async def get_progress():
-    """Get user's learning progress"""
+    """Get user progress"""
     attempts = await get_database()["attempts"].find({}).to_list(100)
     
     if not attempts:
@@ -887,7 +762,6 @@ async def get_progress():
     total_correct = sum(a["correct_answers"] for a in attempts)
     overall_score = (total_correct / total_questions * 100) if total_questions > 0 else 0
     
-    # Analyze strengths/weaknesses (simplified)
     strengths = ["Problem Solving"] if overall_score > 70 else []
     weaknesses = ["Conceptual Understanding"] if overall_score < 60 else []
     
@@ -910,29 +784,26 @@ async def get_progress():
     }
 
 # ============================================================================
-# YOUTUBE RECOMMENDATION ROUTES
+# YOUTUBE ROUTES
 # ============================================================================
 @app.post("/api/recommend/youtube")
 async def recommend_youtube(request: YouTubeRequest):
-    """Recommend YouTube videos for a topic"""
+    """Recommend YouTube videos"""
     try:
-        prompt = f"""Suggest 3 educational YouTube video titles and channels for learning about: {request.topic}
+        prompt = f"""Suggest 3 educational YouTube videos for: {request.topic}
 
-Format as JSON array:
+Format as JSON:
 [
-  {{"title": "video title", "channel": "channel name", "reason": "why this is helpful"}},
-  {{"title": "video title", "channel": "channel name", "reason": "why this is helpful"}},
-  {{"title": "video title", "channel": "channel name", "reason": "why this is helpful"}}
-]
+  {{"title": "title", "channel": "channel", "reason": "reason"}},
+  {{"title": "title", "channel": "channel", "reason": "reason"}},
+  {{"title": "title", "channel": "channel", "reason": "reason"}}
+]"""
 
-Only respond with the JSON array, no additional text."""
-
-        system_prompt = "You are an educational content curator. Suggest real, popular educational YouTube channels. Respond with valid JSON only."
+        system_prompt = "You are an educational content curator. Respond with valid JSON only."
         
         response = await call_llm(prompt, system_prompt)
         
         try:
-            # Try to extract JSON from response
             response = response.strip()
             if not response.startswith('['):
                 start = response.find('[')
@@ -941,97 +812,21 @@ Only respond with the JSON array, no additional text."""
                     response = response[start:end]
             
             recommendations = json.loads(response)
-        except Exception as parse_error:
-            print(f"⚠️  Failed to parse YouTube recommendations: {parse_error}")
-            # Fallback recommendations
+        except:
             recommendations = [
-                {
-                    "title": f"Introduction to {request.topic}",
-                    "channel": "Khan Academy",
-                    "reason": "Clear explanations with visual aids"
-                },
-                {
-                    "title": f"{request.topic} - Complete Guide",
-                    "channel": "Physics Wallah",
-                    "reason": "In-depth coverage with examples"
-                },
-                {
-                    "title": f"Understanding {request.topic}",
-                    "channel": "Vedantu",
-                    "reason": "Student-friendly explanations"
-                }
+                {"title": f"Introduction to {request.topic}", "channel": "Khan Academy", "reason": "Clear explanations"},
+                {"title": f"{request.topic} Guide", "channel": "Physics Wallah", "reason": "In-depth coverage"},
+                {"title": f"Understanding {request.topic}", "channel": "Vedantu", "reason": "Student-friendly"}
             ]
         
         return {"recommendations": recommendations}
     except Exception as e:
         print(f"❌ YouTube recommendation error: {str(e)}")
-        import traceback
-        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"YouTube recommendation failed: {str(e)}")
 
 # ============================================================================
-# HEALTH CHECK & DIAGNOSTICS
+# MAIN
 # ============================================================================
-@app.get("/")
-async def root():
-    return {"message": "BeyondChats Backend API", "status": "running"}
-
-@app.get("/health")
-async def health():
-    """Health check endpoint"""
-    return {"status": "healthy"}
-
-@app.get("/api/diagnostics")
-async def diagnostics():
-    """Diagnose system health"""
-    try:
-        db_status = "connected" if db.client else "disconnected"
-        
-        # Test database
-        try:
-            await db.client.admin.command('ping')
-            db_ping = "✅ OK"
-        except:
-            db_ping = "❌ Failed"
-        
-        # Check upload directory
-        upload_exists = os.path.exists(UPLOAD_DIR)
-        upload_writable = os.access(UPLOAD_DIR, os.W_OK) if upload_exists else False
-        
-        # Count PDFs
-        pdf_count = 0
-        try:
-            pdf_count = await get_database()["pdfs"].count_documents({})
-        except:
-            pass
-        
-        return {
-            "status": "healthy",
-            "database": {
-                "status": db_status,
-                "ping": db_ping,
-                "database_name": DATABASE_NAME
-            },
-            "storage": {
-                "upload_directory": UPLOAD_DIR,
-                "exists": upload_exists,
-                "writable": upload_writable,
-                "is_absolute_path": os.path.isabs(UPLOAD_DIR)
-            },
-            "files": {
-                "total_pdfs": pdf_count
-            },
-            "configuration": {
-                "has_openrouter_key": OPENROUTER_API_KEY != "your_key_here" and bool(OPENROUTER_API_KEY)
-            }
-        }
-    except Exception as e:
-        print(f"❌ Diagnostics error: {str(e)}")
-        return {
-            "status": "error",
-            "error": str(e)
-        }
-
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
