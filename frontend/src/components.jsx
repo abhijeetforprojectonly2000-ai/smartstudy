@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Upload, FileText, Send, Plus, Check, X, RefreshCw, Download, MessageCircle, BarChart3, Youtube, TrendingUp, Award, Target, Sparkles, BookOpen, Zap } from 'lucide-react';
+import { Upload, FileText, Send, Plus, Check, X, RefreshCw, Download, MessageCircle, BarChart3, Youtube, TrendingUp, Award, Target, Sparkles, BookOpen, Zap, Trash2, AlertCircle } from 'lucide-react';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import * as api from './api';
 import { formatDate, formatScore, truncateText, getScoreColor, getScoreBgColor } from './utils';
@@ -11,6 +11,9 @@ export function HomePage() {
   const [pdfs, setPdfs] = useState([]);
   const [selectedPdf, setSelectedPdf] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [deleting, setDeleting] = useState(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [pdfToDelete, setPdfToDelete] = useState(null);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -21,7 +24,11 @@ export function HomePage() {
     try {
       const data = await api.listPDFs();
       setPdfs(data.pdfs);
-      if (data.pdfs.length > 0 && !selectedPdf) {
+      
+      // Update selected PDF if it was deleted
+      if (selectedPdf && !data.pdfs.find(p => p.pdf_id === selectedPdf.pdf_id)) {
+        setSelectedPdf(data.pdfs.length > 0 ? data.pdfs[0] : null);
+      } else if (data.pdfs.length > 0 && !selectedPdf) {
         setSelectedPdf(data.pdfs[0]);
       }
     } catch (error) {
@@ -48,31 +55,79 @@ export function HomePage() {
     }
   };
 
+  const handleDeleteClick = (pdf, e) => {
+    e.stopPropagation();
+    setPdfToDelete(pdf);
+    setShowDeleteModal(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!pdfToDelete) return;
+    
+    setDeleting(pdfToDelete.pdf_id);
+    try {
+      await api.deletePDF(pdfToDelete.pdf_id);
+      await loadPDFs();
+      setShowDeleteModal(false);
+      setPdfToDelete(null);
+    } catch (error) {
+      alert('Failed to delete PDF: ' + error.message);
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  const handleDeleteCancel = () => {
+    setShowDeleteModal(false);
+    setPdfToDelete(null);
+  };
+
   return (
     <div className="max-w-7xl mx-auto fade-in">
+      {/* Delete Confirmation Modal */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full mx-4 fade-in">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center">
+                <AlertCircle className="w-6 h-6 text-red-600" />
+              </div>
+              <h2 className="text-2xl font-bold text-gray-900">Delete PDF?</h2>
+            </div>
+            
+            <p className="text-gray-600 mb-6">
+              Are you sure you want to delete <span className="font-semibold">"{pdfToDelete?.filename}"</span>? 
+              This action cannot be undone.
+            </p>
+            
+            <div className="flex gap-3">
+              <button
+                onClick={handleDeleteCancel}
+                className="flex-1 px-6 py-3 border-2 border-gray-300 rounded-xl font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteConfirm}
+                disabled={deleting === pdfToDelete?.pdf_id}
+                className="flex-1 px-6 py-3 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-xl font-semibold hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {deleting === pdfToDelete?.pdf_id ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Hero Section */}
       <div className="mb-8 relative overflow-hidden bg-gradient-to-r from-primary via-purple-600 to-secondary rounded-2xl p-8 shadow-2xl">
         <div className="absolute inset-0 bg-grid-pattern opacity-10"></div>
         <div className="relative z-10">
           <div className="flex items-center gap-3 mb-3">
-            <Sparkles className="w-8 h-8 text-yellow-300 animate-pulse" />
-            <h1 className="text-4xl font-bold text-white">Welcome to BeyondStudy</h1>
+            <span className="text-4xl">✨</span>
+            <h1 className="text-4xl font-bold text-white">Welcome to SmartStudy</h1>
           </div>
           <p className="text-indigo-100 text-lg">Transform your learning experience with AI-powered tools that make studying smarter, faster, and more effective!</p>
-          <div className="flex flex-wrap gap-4 mt-6">
-            <div className="flex items-center gap-2 bg-white/20 backdrop-blur-sm px-4 py-2 rounded-lg">
-              <Zap className="w-5 h-5 text-yellow-300" />
-              <span className="text-white font-medium">AI-Powered Quizzes</span>
-            </div>
-            <div className="flex items-center gap-2 bg-white/20 backdrop-blur-sm px-4 py-2 rounded-lg">
-              <Target className="w-5 h-5 text-yellow-300" />
-              <span className="text-white font-medium">Smart Progress Tracking</span>
-            </div>
-            <div className="flex items-center gap-2 bg-white/20 backdrop-blur-sm px-4 py-2 rounded-lg">
-              <MessageCircle className="w-5 h-5 text-yellow-300" />
-              <span className="text-white font-medium">24/7 AI Tutor</span>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -131,7 +186,7 @@ export function HomePage() {
           <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2">
             {pdfs.length === 0 ? (
               <div className="text-center py-12">
-                <BookOpen className="w-16 h-16 mx-auto mb-4 text-gray-300" />
+                <FileText className="w-16 h-16 mx-auto mb-4 text-gray-300" />
                 <p className="text-gray-400 text-sm">No PDFs uploaded yet</p>
                 <p className="text-gray-400 text-xs mt-1">Upload your first document to begin</p>
               </div>
@@ -141,7 +196,7 @@ export function HomePage() {
                   key={pdf.pdf_id}
                   onClick={() => setSelectedPdf(pdf)}
                   className={`
-                    p-4 rounded-xl cursor-pointer transition-all duration-200 border-2
+                    group relative p-4 rounded-xl cursor-pointer transition-all duration-200 border-2
                     ${selectedPdf?.pdf_id === pdf.pdf_id
                       ? 'border-primary bg-gradient-to-r from-primary/10 to-secondary/10 shadow-lg scale-105'
                       : 'border-gray-200 hover:border-primary/50 hover:shadow-md'
@@ -166,6 +221,16 @@ export function HomePage() {
                         <span>{formatDate(pdf.uploaded_at).split(',')[0]}</span>
                       </div>
                     </div>
+                    
+                    {/* Delete Button */}
+                    <button
+                      onClick={(e) => handleDeleteClick(pdf, e)}
+                      disabled={deleting === pdf.pdf_id}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity p-2 hover:bg-red-100 rounded-lg disabled:opacity-50"
+                      title="Delete PDF"
+                    >
+                      <Trash2 className="w-4 h-4 text-red-600" />
+                    </button>
                   </div>
                 </div>
               ))
@@ -184,7 +249,7 @@ export function HomePage() {
                 rel="noopener noreferrer"
                 className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-primary to-secondary text-white rounded-lg hover:shadow-lg transition-all duration-200 text-sm font-medium"
               >
-                <Download className="w-4 h-4" />
+                <Upload className="w-4 h-4" />
                 Download
               </a>
             )}
@@ -676,6 +741,9 @@ export function ChatPage() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [deleting, setDeleting] = useState(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [chatToDelete, setChatToDelete] = useState(null);
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
@@ -725,6 +793,40 @@ export function ChatPage() {
     setInput('');
   };
 
+  const handleDeleteClick = (chat, e) => {
+    e.stopPropagation();
+    setChatToDelete(chat);
+    setShowDeleteModal(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!chatToDelete) return;
+    
+    setDeleting(chatToDelete.chat_id);
+    try {
+      await api.deleteChat(chatToDelete.chat_id);
+      
+      // If we deleted the current chat, clear it
+      if (currentChat === chatToDelete.chat_id) {
+        setCurrentChat(null);
+        setMessages([]);
+      }
+      
+      await loadChatHistory();
+      setShowDeleteModal(false);
+      setChatToDelete(null);
+    } catch (error) {
+      alert('Failed to delete chat: ' + error.message);
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  const handleDeleteCancel = () => {
+    setShowDeleteModal(false);
+    setChatToDelete(null);
+  };
+
   const handleSendMessage = async () => {
     if (!input.trim()) return;
 
@@ -771,6 +873,40 @@ export function ChatPage() {
 
   return (
     <div className="h-[calc(100vh-8rem)] max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-4 gap-6 fade-in">
+      {/* Delete Confirmation Modal */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full mx-4 fade-in">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center">
+                <AlertCircle className="w-6 h-6 text-red-600" />
+              </div>
+              <h2 className="text-2xl font-bold text-gray-900">Delete Chat?</h2>
+            </div>
+            
+            <p className="text-gray-600 mb-6">
+              Are you sure you want to delete this conversation? This action cannot be undone.
+            </p>
+            
+            <div className="flex gap-3">
+              <button
+                onClick={handleDeleteCancel}
+                className="flex-1 px-6 py-3 border-2 border-gray-300 rounded-xl font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteConfirm}
+                disabled={deleting === chatToDelete?.chat_id}
+                className="flex-1 px-6 py-3 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-xl font-semibold hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {deleting === chatToDelete?.chat_id ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Left Sidebar - Chat History */}
       <div className="lg:col-span-1 bg-white rounded-2xl shadow-xl p-5 overflow-y-auto border border-gray-100">
         <div className="flex items-center justify-between mb-5">
@@ -814,19 +950,33 @@ export function ChatPage() {
               key={chat.chat_id}
               onClick={() => loadChat(chat.chat_id)}
               className={`
-                p-3 rounded-xl cursor-pointer border-2 transition-all duration-200
+                group relative p-3 rounded-xl cursor-pointer border-2 transition-all duration-200
                 ${currentChat === chat.chat_id
                   ? 'border-primary bg-gradient-to-r from-primary/10 to-secondary/10 shadow-md'
                   : 'border-gray-200 hover:border-primary/50 hover:shadow-sm'
                 }
               `}
             >
-              <p className="text-sm font-semibold text-gray-900 truncate mb-1">
-                {truncateText(chat.last_message, 40)}
-              </p>
-              <div className="flex items-center gap-2 text-xs text-gray-500">
-                <MessageCircle className="w-3 h-3" />
-                <span>{chat.message_count} messages</span>
+              <div className="flex items-start gap-2">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-gray-900 truncate mb-1">
+                    {truncateText(chat.last_message, 35)}
+                  </p>
+                  <div className="flex items-center gap-2 text-xs text-gray-500">
+                    <MessageCircle className="w-3 h-3" />
+                    <span>{chat.message_count} messages</span>
+                  </div>
+                </div>
+                
+                {/* Delete Button */}
+                <button
+                  onClick={(e) => handleDeleteClick(chat, e)}
+                  disabled={deleting === chat.chat_id}
+                  className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 hover:bg-red-100 rounded-lg disabled:opacity-50 flex-shrink-0"
+                  title="Delete chat"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                </button>
               </div>
             </div>
           ))}
@@ -876,7 +1026,7 @@ export function ChatPage() {
                     💡 Explain this concept
                   </button>
                   <button className="px-4 py-2 bg-white border-2 border-purple-200 rounded-xl hover:border-purple-400 transition-colors text-sm">
-                    📝 Give me examples
+                    🔍 Give me examples
                   </button>
                   <button className="px-4 py-2 bg-white border-2 border-purple-200 rounded-xl hover:border-purple-400 transition-colors text-sm">
                     🎯 Practice questions
@@ -1209,30 +1359,25 @@ export function YouTubePage() {
         <label className="block text-lg font-bold text-gray-900 mb-4">
           🎯 What topic would you like to learn?
         </label>
+        <div className="flex gap-3"></div>
         <div className="flex gap-3">
           <input
             type="text"
             value={topic}
             onChange={(e) => setTopic(e.target.value)}
             onKeyPress={handleKeyPress}
-            placeholder="e.g., Newton's Laws of Motion, Photosynthesis, Algebra..."
-            className="flex-1 px-5 py-4 border-2 border-gray-200 rounded-2xl input-focus font-medium text-lg"
+            placeholder="e.g., Newton's Laws of Motion"
+            className="flex-1 px-5 py-4 border-2 border-gray-200 rounded-xl input-focus font-medium text-lg"
           />
           <button
             onClick={handleGetRecommendations}
             disabled={loading || !topic.trim()}
-            className="px-8 py-4 bg-gradient-to-br from-red-600 to-rose-600 text-white rounded-2xl hover:shadow-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-3 font-bold hover:scale-105 active:scale-95"
+            className="px-8 bg-gradient-to-r from-red-600 to-rose-600 text-white rounded-xl hover:shadow-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-105 active:scale-95 font-semibold"
           >
             {loading ? (
-              <>
-                <div className="spinner w-6 h-6 border-2" />
-                Loading...
-              </>
+              <div className="spinner w-6 h-6 border-2" />
             ) : (
-              <>
-                <Youtube className="w-6 h-6" />
-                Find Videos
-              </>
+              <Youtube className="w-6 h-6" />
             )}
           </button>
         </div>
@@ -1240,34 +1385,71 @@ export function YouTubePage() {
 
       {/* Recommendations */}
       {recommendations.length > 0 && (
-        <div className="space-y-6">
-          <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <Sparkles className="w-6 h-6 text-primary" />
-            Recommended for You
+        <div className="space-y-4 fade-in">
+          <h2 className="text-2xl font-bold text-gray-900 mb-4 flex items-center gap-2">
+            <Sparkles className="w-6 h-6 text-red-600" />
+            Recommended Videos
           </h2>
-          {recommendations.map((rec, idx) => (
-            <div key={idx} className="bg-white rounded-2xl shadow-xl p-6 border border-gray-100 card-hover">
-              <div className="flex items-start gap-5">
-                <div className="flex-shrink-0 w-16 h-16 bg-gradient-to-br from-red-600 to-rose-600 rounded-xl flex items-center justify-center shadow-lg">
-                  <Youtube className="w-8 h-8 text-white" />
+          {recommendations.map((video, idx) => (
+            <div
+              key={idx}
+              className="bg-white rounded-2xl shadow-lg p-6 hover:shadow-xl transition-all duration-200 border border-gray-100 card-hover"
+            >
+              <div className="flex items-start gap-4">
+                <div className="flex-shrink-0 w-14 h-14 bg-gradient-to-br from-red-600 to-rose-600 rounded-xl flex items-center justify-center shadow-lg">
+                  <Youtube className="w-7 h-7 text-white" />
                 </div>
                 <div className="flex-1">
                   <h3 className="text-xl font-bold text-gray-900 mb-2">
-                    {rec.title}
+                    {video.title}
                   </h3>
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="px-3 py-1 bg-red-100 text-red-700 rounded-full text-xs font-bold">
-                      {rec.channel}
+                  <div className="flex items-center gap-3 mb-3">
+                    <span className="px-3 py-1 bg-red-100 text-red-700 rounded-full text-sm font-semibold">
+                      {video.channel}
                     </span>
+                    <span className="text-gray-500 text-sm">•</span>
+                    <span className="text-gray-600 text-sm">Educational Content</span>
                   </div>
-                  <p className="text-gray-700 leading-relaxed">
-                    <span className="font-semibold text-gray-900">Why this video: </span>
-                    {rec.reason}
+                  <p className="text-gray-600 leading-relaxed">
+                    <span className="font-semibold text-gray-700">Why recommended:</span> {video.reason}
                   </p>
                 </div>
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Empty State */}
+      {recommendations.length === 0 && !loading && (
+        <div className="bg-white rounded-2xl shadow-xl p-12 text-center border border-gray-100">
+          <div className="w-24 h-24 mx-auto mb-6 bg-gradient-to-br from-red-100 to-rose-100 rounded-full flex items-center justify-center">
+            <Youtube className="w-12 h-12 text-red-600" />
+          </div>
+          <h3 className="text-2xl font-bold text-gray-900 mb-2">Discover Learning Videos</h3>
+          <p className="text-gray-600 mb-6">
+            Enter any topic and get AI-curated educational video recommendations from top channels
+          </p>
+          <div className="flex flex-wrap gap-2 justify-center">
+            <button
+              onClick={() => setTopic("Photosynthesis")}
+              className="px-4 py-2 bg-white border-2 border-red-200 rounded-xl hover:border-red-400 transition-colors text-sm font-medium"
+            >
+              🌿 Photosynthesis
+            </button>
+            <button
+              onClick={() => setTopic("Trigonometry")}
+              className="px-4 py-2 bg-white border-2 border-red-200 rounded-xl hover:border-red-400 transition-colors text-sm font-medium"
+            >
+              📐 Trigonometry
+            </button>
+            <button
+              onClick={() => setTopic("World War 2")}
+              className="px-4 py-2 bg-white border-2 border-red-200 rounded-xl hover:border-red-400 transition-colors text-sm font-medium"
+            >
+              🌍 World War 2
+            </button>
+          </div>
         </div>
       )}
     </div>
