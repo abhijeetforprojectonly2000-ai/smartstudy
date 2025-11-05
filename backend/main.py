@@ -32,9 +32,9 @@ except ImportError:
 # ============================================================================
 MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
 DATABASE_NAME = os.getenv("DATABASE_NAME", "beyondchats_db")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "your_key_here")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-MODEL_NAME = "openai/gpt-3.5-turbo"
+MODEL_NAME = "meta-llama/llama-3.2-3b-instruct:free"  # Using free model
 UPLOAD_DIR = "./uploads"
 
 # Create upload directory
@@ -166,13 +166,13 @@ def extract_text_from_pdf(pdf_path: str) -> Dict[str, str]:
         print(f"✅ Extracted {len(pages_text)} pages using pdfplumber")
         return pages_text
     
-    print("🔄 Trying PyMuPDF...")
+    print("📄 Trying PyMuPDF...")
     pages_text = extract_text_with_pymupdf(pdf_path)
     if pages_text:
         print(f"✅ Extracted {len(pages_text)} pages using PyMuPDF")
         return pages_text
     
-    print("🔄 Trying PyPDF2...")
+    print("📄 Trying PyPDF2...")
     pages_text = extract_text_with_pypdf2(pdf_path)
     if pages_text:
         print(f"✅ Extracted {len(pages_text)} pages using PyPDF2")
@@ -215,14 +215,24 @@ def chunk_text(text: str, chunk_size: int = 1000) -> List[str]:
     
     return chunks
 
-async def call_llm(prompt: str, system_prompt: str = "You are a helpful AI assistant.") -> str:
-    """Call OpenRouter API (GPT-3.5) using httpx"""
+async def call_llm(prompt: str, system_prompt: str = "You are a helpful AI assistant.", use_fallback: bool = True) -> str:
+    """Call OpenRouter API with improved error handling and fallback"""
+    
+    # Check if API key is configured
+    if not OPENROUTER_API_KEY or OPENROUTER_API_KEY == "your_key_here":
+        print("⚠️  OpenRouter API key not configured. Using fallback response.")
+        if use_fallback:
+            return get_fallback_response(prompt, system_prompt)
+        else:
+            raise HTTPException(
+                status_code=503,
+                detail="AI service not configured. Please set OPENROUTER_API_KEY in environment variables."
+            )
+    
     try:
-        if OPENROUTER_API_KEY == "your_key_here" or not OPENROUTER_API_KEY:
-            print("⚠️  Warning: OpenRouter API key not set. Using fallback responses.")
-            return "This is a fallback response. Please set OPENROUTER_API_KEY environment variable."
+        print(f"🤖 Calling LLM API with model: {MODEL_NAME}")
         
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
                 f"{OPENROUTER_BASE_URL}/chat/completions",
                 headers={
@@ -237,26 +247,126 @@ async def call_llm(prompt: str, system_prompt: str = "You are a helpful AI assis
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt}
                     ],
-                    "temperature": 0.7
+                    "temperature": 0.7,
+                    "max_tokens": 1000
                 }
             )
             
+            # Log response status
+            print(f"📡 API Response Status: {response.status_code}")
+            
+            if response.status_code == 401:
+                print("❌ Invalid API Key")
+                if use_fallback:
+                    return get_fallback_response(prompt, system_prompt)
+                raise HTTPException(status_code=503, detail="Invalid API key")
+            
+            if response.status_code == 429:
+                print("⚠️  Rate limit exceeded")
+                if use_fallback:
+                    return get_fallback_response(prompt, system_prompt)
+                raise HTTPException(status_code=503, detail="API rate limit exceeded")
+            
             response.raise_for_status()
             data = response.json()
-            return data["choices"][0]["message"]["content"]
+            
+            # Extract content from response
+            if "choices" in data and len(data["choices"]) > 0:
+                content = data["choices"][0]["message"]["content"]
+                print(f"✅ LLM Response received ({len(content)} chars)")
+                return content
+            else:
+                print("❌ Unexpected API response format")
+                if use_fallback:
+                    return get_fallback_response(prompt, system_prompt)
+                raise HTTPException(status_code=503, detail="Unexpected API response format")
             
     except httpx.HTTPStatusError as e:
         print(f"❌ LLM API HTTP Error: {e.response.status_code}")
-        print(f"Response: {e.response.text}")
-        return f"AI service error: {e.response.status_code}. Please check your API key."
+        print(f"Response: {e.response.text[:200]}")
+        if use_fallback:
+            return get_fallback_response(prompt, system_prompt)
+        raise HTTPException(
+            status_code=503,
+            detail=f"AI service error: {e.response.status_code}"
+        )
     except httpx.TimeoutException:
         print("❌ LLM API Timeout")
-        return "The AI service is taking too long to respond. Please try again."
+        if use_fallback:
+            return get_fallback_response(prompt, system_prompt)
+        raise HTTPException(
+            status_code=503,
+            detail="AI service timeout. Please try again."
+        )
     except Exception as e:
         print(f"❌ LLM API Error: {str(e)}")
         import traceback
         traceback.print_exc()
-        return "I'm currently unable to connect to the AI service. Please try again later."
+        if use_fallback:
+            return get_fallback_response(prompt, system_prompt)
+        raise HTTPException(
+            status_code=503,
+            detail="AI service unavailable"
+        )
+
+def get_fallback_response(prompt: str, system_prompt: str) -> str:
+    """Generate intelligent fallback responses based on context"""
+    
+    # Detect if this is a chat/question
+    if "question" in prompt.lower() or "explain" in prompt.lower() or "what" in prompt.lower():
+        return """I understand you have a question, but I'm currently running in fallback mode without access to the AI service. 
+
+To get full AI-powered responses, please:
+1. Set your OPENROUTER_API_KEY in the .env file
+2. Get a free API key from: https://openrouter.ai/keys
+3. Restart the server
+
+In the meantime, I can still help you with:
+- Uploading and viewing PDFs
+- Generating structured quiz questions (with basic templates)
+- Tracking your progress
+- Managing your study materials
+
+What would you like to do?"""
+    
+    # Detect if this is quiz generation
+    if "generate" in prompt.lower() and "quiz" in prompt.lower():
+        return json.dumps([
+            {
+                "question": "What is the fundamental principle discussed in the material?",
+                "question_type": "SAQ",
+                "options": None,
+                "correct_answer": "Please refer to the study material for the correct answer",
+                "explanation": "This is a template question. Connect the AI service for personalized questions."
+            }
+        ])
+    
+    # Detect if this is YouTube recommendation
+    if "youtube" in prompt.lower() or "video" in prompt.lower():
+        topic = "this topic"
+        if ":" in prompt:
+            topic = prompt.split(":")[-1].strip()[:50]
+        
+        return json.dumps([
+            {
+                "title": f"Introduction to {topic}",
+                "channel": "Khan Academy",
+                "reason": "Clear and comprehensive explanations suitable for beginners"
+            },
+            {
+                "title": f"Advanced concepts in {topic}",
+                "channel": "Crash Course",
+                "reason": "In-depth coverage with engaging visuals"
+            },
+            {
+                "title": f"Practical applications of {topic}",
+                "channel": "Physics Wallah",
+                "reason": "Real-world examples and problem-solving techniques"
+            }
+        ])
+    
+    # Default fallback
+    return "I'm currently operating in fallback mode. Please configure the OPENROUTER_API_KEY to enable full AI capabilities."
 
 def find_citations(query: str, pages_text: Dict[str, str], top_k: int = 3) -> List[Dict]:
     """Simple keyword-based citation search"""
@@ -310,10 +420,12 @@ async def startup_event():
     print("="*60)
     print(f"🗄️  Database: {DATABASE_NAME}")
     print(f"📁 Upload Directory: {UPLOAD_DIR}")
+    print(f"🤖 AI Model: {MODEL_NAME}")
     
-    if OPENROUTER_API_KEY == "your_key_here" or not OPENROUTER_API_KEY:
+    if not OPENROUTER_API_KEY or OPENROUTER_API_KEY == "your_key_here":
         print("⚠️  OpenRouter API Key: NOT SET")
-        print("   → Set OPENROUTER_API_KEY in .env file")
+        print("   → Running in FALLBACK MODE")
+        print("   → Get free key: https://openrouter.ai/keys")
     else:
         print("✅ OpenRouter API Key: Configured")
     
@@ -328,11 +440,19 @@ async def shutdown_event():
 # ============================================================================
 @app.get("/")
 async def root():
-    return {"message": "BeyondChats Backend API", "status": "running"}
+    return {
+        "message": "BeyondChats Backend API",
+        "status": "running",
+        "ai_configured": bool(OPENROUTER_API_KEY and OPENROUTER_API_KEY != "your_key_here")
+    }
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy"}
+    return {
+        "status": "healthy",
+        "database": "connected" if db.client else "disconnected",
+        "ai_service": "configured" if OPENROUTER_API_KEY else "fallback_mode"
+    }
 
 # ============================================================================
 # PDF ROUTES 
@@ -477,9 +597,9 @@ async def generate_quiz(request: QuizGenerateRequest):
             all_text = " ".join(pdf["pages_text"].values())
             context = all_text[:4000]
         else:
-            context = "General Physics topics from Class XI NCERT"
+            context = "General educational topics"
         
-        prompt = f"""Based on the following content, generate quiz questions:
+        prompt = f"""Based on the following content, generate quiz questions in STRICT JSON format:
 
 Content: {context}
 
@@ -488,25 +608,40 @@ Generate exactly:
 - {request.num_saq} Short Answer Questions (SAQ)
 - {request.num_laq} Long Answer Questions (LAQ)
 
-Format as JSON array:
+RESPOND ONLY WITH A JSON ARRAY IN THIS EXACT FORMAT:
 [
   {{
-    "question": "question text",
-    "question_type": "MCQ|SAQ|LAQ",
-    "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
-    "correct_answer": "correct answer",
-    "explanation": "explanation"
+    "question": "What is X?",
+    "question_type": "MCQ",
+    "options": ["A) Option 1", "B) Option 2", "C) Option 3", "D) Option 4"],
+    "correct_answer": "A) Option 1",
+    "explanation": "Brief explanation"
+  }},
+  {{
+    "question": "Explain Y",
+    "question_type": "SAQ",
+    "options": null,
+    "correct_answer": "Expected answer",
+    "explanation": "Brief explanation"
   }}
 ]
 
-For MCQ include 4 options, for SAQ/LAQ set options to null."""
+IMPORTANT: Return ONLY the JSON array, no other text."""
 
-        system_prompt = "You are an expert teacher. Respond with valid JSON only."
+        system_prompt = "You are a quiz generator. Respond with ONLY valid JSON array, no markdown, no explanations."
         
-        response = await call_llm(prompt, system_prompt)
+        response = await call_llm(prompt, system_prompt, use_fallback=True)
         
         try:
             response = response.strip()
+            
+            # Remove markdown code blocks if present
+            if response.startswith('```'):
+                lines = response.split('\n')
+                response = '\n'.join(line for line in lines if not line.startswith('```'))
+                response = response.strip()
+            
+            # Find JSON array
             if not response.startswith('['):
                 start = response.find('[')
                 end = response.rfind(']') + 1
@@ -514,15 +649,41 @@ For MCQ include 4 options, for SAQ/LAQ set options to null."""
                     response = response[start:end]
             
             questions_data = json.loads(response)
-            questions = [QuizQuestion(**q) for q in questions_data]
-        except:
+            
+            # Validate and clean questions
+            validated_questions = []
+            for q in questions_data:
+                try:
+                    validated_questions.append(QuizQuestion(**q))
+                except Exception as e:
+                    print(f"⚠️  Skipping invalid question: {e}")
+                    continue
+            
+            questions = validated_questions
+            
+        except Exception as e:
+            print(f"⚠️  Failed to parse LLM response: {e}")
+            print(f"Response was: {response[:500]}")
+            
+            # Fallback questions
             questions = [
                 QuizQuestion(
-                    question="What is the SI unit of force?",
-                    question_type="MCQ",
-                    options=["A) Newton", "B) Joule", "C) Watt", "D) Pascal"],
-                    correct_answer="A) Newton",
-                    explanation="The SI unit of force is Newton (N)."
+                    question="What is the main topic discussed in the material?",
+                    question_type="SAQ",
+                    options=None,
+                    correct_answer="Please refer to the study material",
+                    explanation="This is a template question. Configure AI service for personalized questions."
+                )
+            ]
+        
+        if not questions:
+            questions = [
+                QuizQuestion(
+                    question="What are the key concepts covered?",
+                    question_type="SAQ",
+                    options=None,
+                    correct_answer="Refer to course material",
+                    explanation="Template question - AI service needed for custom questions"
                 )
             ]
         
@@ -545,6 +706,8 @@ For MCQ include 4 options, for SAQ/LAQ set options to null."""
         raise
     except Exception as e:
         print(f"❌ Quiz generation error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Quiz generation failed: {str(e)}")
 
 @app.post("/api/quiz/submit")
@@ -601,55 +764,69 @@ async def submit_quiz(request: QuizSubmitRequest):
     }
 
 # ============================================================================
-# CHAT ROUTES
+# CHAT ROUTES 
 # ============================================================================
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
     """Chat with AI teacher"""
     try:
+        print(f"💬 Chat request received: {request.message[:50]}...")
+        
+        # Get or create chat session
         if request.chat_id:
             chat_doc = await get_database()["chats"].find_one({"_id": ObjectId(request.chat_id)})
             if not chat_doc:
                 raise HTTPException(status_code=404, detail="Chat not found")
             messages = chat_doc.get("messages", [])
+            chat_id = request.chat_id
         else:
             chat_id = str(ObjectId())
             messages = []
-            chat_doc = {
-                "_id": ObjectId(chat_id),
-                "pdf_id": request.pdf_id,
-                "messages": [],
-                "created_at": datetime.utcnow()
-            }
-            request.chat_id = chat_id
         
+        # Find citations if PDF is provided
         citations = []
         context = ""
         
         if request.pdf_id:
-            pdf = await get_database()["pdfs"].find_one({"_id": ObjectId(request.pdf_id)})
-            if pdf:
-                pages_text = pdf["pages_text"]
-                citations = find_citations(request.message, pages_text)
-                
-                if citations:
-                    context = "\n\n".join([f"[Page {c['page']}]: {c['snippet']}" for c in citations])
+            try:
+                pdf = await get_database()["pdfs"].find_one({"_id": ObjectId(request.pdf_id)})
+                if pdf:
+                    pages_text = pdf["pages_text"]
+                    citations = find_citations(request.message, pages_text, top_k=3)
+                    
+                    if citations:
+                        context_parts = []
+                        for c in citations:
+                            context_parts.append(f"[Page {c['page']}]: {c['snippet']}")
+                        context = "\n\n".join(context_parts)
+                        print(f"📚 Found {len(citations)} relevant citations")
+            except Exception as e:
+                print(f"⚠️  Error finding citations: {e}")
         
+        # Build prompt
         if context:
-            prompt = f"""Based on these excerpts:
+            prompt = f"""You are a helpful teacher. Answer the student's question based on these excerpts from their coursebook:
 
 {context}
 
 Student's question: {request.message}
 
-Provide a helpful educational response."""
+Provide a clear, educational response. If the excerpts don't fully answer the question, use your knowledge but acknowledge this."""
         else:
-            prompt = f"Student's question: {request.message}\n\nProvide a helpful response."
+            prompt = f"""You are a helpful teacher. Answer this student's question clearly and educationally:
+
+Question: {request.message}
+
+Provide a thorough, helpful response."""
         
-        system_prompt = "You are a knowledgeable teacher. Be clear and encouraging."
+        system_prompt = "You are a knowledgeable and patient teacher. Provide clear, educational responses that help students learn."
         
-        response_text = await call_llm(prompt, system_prompt)
+        # Get AI response
+        response_text = await call_llm(prompt, system_prompt, use_fallback=True)
         
+        print(f"✅ Chat response generated ({len(response_text)} chars)")
+        
+        # Save to database
         messages.append({
             "role": "user",
             "content": request.message,
@@ -659,45 +836,59 @@ Provide a helpful educational response."""
         messages.append({
             "role": "assistant",
             "content": response_text,
-            "citations": citations if citations else None,
+            "citations": citations,
             "timestamp": datetime.utcnow()
         })
         
-        await get_database()["chats"].update_one(
-            {"_id": ObjectId(request.chat_id)},
-            {"$set": {"messages": messages, "updated_at": datetime.utcnow()}},
-            upsert=True
-        )
+        chat_doc = {
+            "_id": ObjectId(chat_id),
+            "pdf_id": request.pdf_id,
+            "messages": messages,
+            "last_message": request.message,
+            "updated_at": datetime.utcnow()
+        }
+        
+        if request.chat_id:
+            await get_database()["chats"].update_one(
+                {"_id": ObjectId(chat_id)},
+                {"$set": chat_doc}
+            )
+        else:
+            chat_doc["created_at"] = datetime.utcnow()
+            await get_database()["chats"].insert_one(chat_doc)
         
         return {
-            "chat_id": request.chat_id,
+            "chat_id": chat_id,
             "message": response_text,
-            "citations": citations if citations else None
+            "citations": citations
         }
-    except HTTPException:
-        raise
+        
     except Exception as e:
         print(f"❌ Chat error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
 
 @app.get("/api/chat/history")
 async def get_chat_history():
     """Get all chat sessions"""
-    chats = await get_database()["chats"].find({}).sort("_id", -1).to_list(50)
-    
-    return {
-        "chats": [
-            {
-                "chat_id": str(chat["_id"]),
-                "pdf_id": chat.get("pdf_id"),
-                "message_count": len(chat.get("messages", [])),
-                "last_message": chat["messages"][-1]["content"][:100] if chat.get("messages") else "",
-                "created_at": chat.get("created_at", datetime.utcnow()).isoformat(),
-                "updated_at": chat.get("updated_at", chat.get("created_at", datetime.utcnow())).isoformat()
-            }
-            for chat in chats
-        ]
-    }
+    try:
+        chats = await get_database()["chats"].find({}).sort("updated_at", -1).to_list(100)
+        
+        return {
+            "chats": [
+                {
+                    "chat_id": str(chat["_id"]),
+                    "last_message": chat.get("last_message", ""),
+                    "message_count": len(chat.get("messages", [])),
+                    "updated_at": chat.get("updated_at", chat.get("created_at")).isoformat()
+                }
+                for chat in chats
+            ]
+        }
+    except Exception as e:
+        print(f"❌ Error fetching chat history: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/chat/{chat_id}")
 async def get_chat(chat_id: str):
@@ -708,103 +899,141 @@ async def get_chat(chat_id: str):
         if not chat:
             raise HTTPException(status_code=404, detail="Chat not found")
         
-        messages = chat.get("messages", [])
-        formatted_messages = []
-        
-        for msg in messages:
-            formatted_msg = {
-                "role": msg.get("role", "user"),
-                "content": msg.get("content", ""),
-                "timestamp": msg.get("timestamp", datetime.utcnow()).isoformat()
-            }
-            if "citations" in msg and msg["citations"]:
-                formatted_msg["citations"] = msg["citations"]
-            formatted_messages.append(formatted_msg)
-        
         return {
             "chat_id": str(chat["_id"]),
-            "pdf_id": chat.get("pdf_id"),
-            "messages": formatted_messages
+            "messages": chat.get("messages", [])
         }
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"❌ Error fetching chat: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to fetch chat: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/chat/{chat_id}")
 async def delete_chat(chat_id: str):
     """Delete a chat"""
-    result = await get_database()["chats"].delete_one({"_id": ObjectId(chat_id)})
-    
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Chat not found")
-    
-    return {"message": "Chat deleted successfully"}
+    try:
+        result = await get_database()["chats"].delete_one({"_id": ObjectId(chat_id)})
+        
+        if result.deleted_count == 0:
+            raise HTTPException(status_code=404, detail="Chat not found")
+        
+        return {"message": "Chat deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error deleting chat: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================================
 # PROGRESS ROUTES
 # ============================================================================
 @app.get("/api/progress")
 async def get_progress():
-    """Get user progress"""
-    attempts = await get_database()["attempts"].find({}).to_list(100)
-    
-    if not attempts:
+    """Get user progress statistics"""
+    try:
+        attempts = await get_database()["attempts"].find({}).sort("submitted_at", -1).to_list(100)
+        
+        if not attempts:
+            return {
+                "total_quizzes": 0,
+                "total_questions_answered": 0,
+                "overall_score": 0,
+                "recent_attempts": [],
+                "strengths": [],
+                "weaknesses": []
+            }
+        
+        total_questions = sum(a["total_questions"] for a in attempts)
+        total_score = sum(a["score_percentage"] for a in attempts)
+        avg_score = total_score / len(attempts) if attempts else 0
+        
+        # Get recent attempts
+        recent = attempts[:10]
+        recent_attempts = [
+            {
+                "date": a["submitted_at"].isoformat(),
+                "score": a["score_percentage"],
+                "questions": a["total_questions"]
+            }
+            for a in recent
+        ]
+        
+        # Analyze strengths and weaknesses (simplified)
+        high_scores = [a for a in attempts if a["score_percentage"] >= 80]
+        low_scores = [a for a in attempts if a["score_percentage"] < 60]
+        
+        strengths = []
+        weaknesses = []
+        
+        if high_scores:
+            strengths.append(f"Consistently scoring well ({len(high_scores)} quizzes above 80%)")
+        
+        if low_scores:
+            weaknesses.append(f"Some challenging areas ({len(low_scores)} quizzes below 60%)")
+        
+        if avg_score >= 70:
+            strengths.append("Strong overall performance")
+        
         return {
-            "total_quizzes": 0,
-            "total_questions_answered": 0,
-            "overall_score": 0,
-            "strengths": [],
-            "weaknesses": [],
-            "recent_attempts": []
+            "total_quizzes": len(attempts),
+            "total_questions_answered": total_questions,
+            "overall_score": round(avg_score, 1),
+            "recent_attempts": recent_attempts,
+            "strengths": strengths,
+            "weaknesses": weaknesses
         }
-    
-    total_questions = sum(a["total_questions"] for a in attempts)
-    total_correct = sum(a["correct_answers"] for a in attempts)
-    overall_score = (total_correct / total_questions * 100) if total_questions > 0 else 0
-    
-    strengths = ["Problem Solving"] if overall_score > 70 else []
-    weaknesses = ["Conceptual Understanding"] if overall_score < 60 else []
-    
-    recent_attempts = [
-        {
-            "quiz_id": str(a["quiz_id"]),
-            "score": a["score_percentage"],
-            "date": a["submitted_at"].isoformat()
-        }
-        for a in sorted(attempts, key=lambda x: x["submitted_at"], reverse=True)[:5]
-    ]
-    
-    return {
-        "total_quizzes": len(attempts),
-        "total_questions_answered": total_questions,
-        "overall_score": round(overall_score, 2),
-        "strengths": strengths,
-        "weaknesses": weaknesses,
-        "recent_attempts": recent_attempts
-    }
+        
+    except Exception as e:
+        print(f"❌ Progress error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================================
-# YOUTUBE ROUTES
+# YOUTUBE RECOMMENDATION ROUTES
 # ============================================================================
 @app.post("/api/recommend/youtube")
 async def recommend_youtube(request: YouTubeRequest):
-    """Recommend YouTube videos"""
+    """Get YouTube video recommendations"""
     try:
-        prompt = f"""Suggest 3 educational YouTube videos for: {request.topic}
-
-Format as JSON:
-[
-  {{"title": "title", "channel": "channel", "reason": "reason"}},
-  {{"title": "title", "channel": "channel", "reason": "reason"}},
-  {{"title": "title", "channel": "channel", "reason": "reason"}}
-]"""
-
-        system_prompt = "You are an educational content curator. Respond with valid JSON only."
+        context = ""
+        if request.pdf_id:
+            pdf = await get_database()["pdfs"].find_one({"_id": ObjectId(request.pdf_id)})
+            if pdf:
+                all_text = " ".join(pdf["pages_text"].values())
+                context = all_text[:2000]
         
-        response = await call_llm(prompt, system_prompt)
+        prompt = f"""Recommend 3 educational YouTube videos for the topic: "{request.topic}"
+
+{f"Context from coursebook: {context}" if context else ""}
+
+Provide recommendations in this EXACT JSON format:
+[
+  {{
+    "title": "Video title",
+    "channel": "Channel name",
+    "reason": "Why this video is recommended"
+  }}
+]
+
+Focus on:
+- Educational channels (Khan Academy, Crash Course, etc.)
+- Clear explanations
+- Relevance to the topic
+
+RESPOND WITH ONLY THE JSON ARRAY, NO OTHER TEXT."""
+
+        system_prompt = "You are an educational content curator. Respond with ONLY valid JSON array, no markdown, no explanations."
+        
+        response = await call_llm(prompt, system_prompt, use_fallback=True)
         
         try:
+            # Clean response
             response = response.strip()
+            if response.startswith('```'):
+                lines = response.split('\n')
+                response = '\n'.join(line for line in lines if not line.startswith('```'))
+                response = response.strip()
+            
             if not response.startswith('['):
                 start = response.find('[')
                 end = response.rfind(']') + 1
@@ -812,21 +1041,60 @@ Format as JSON:
                     response = response[start:end]
             
             recommendations = json.loads(response)
-        except:
+            
+            # Validate
+            if not isinstance(recommendations, list):
+                raise ValueError("Response is not a list")
+            
+            # Ensure we have at least some recommendations
+            if len(recommendations) == 0:
+                raise ValueError("No recommendations in response")
+            
+        except Exception as e:
+            print(f"⚠️  Failed to parse recommendations: {e}")
+            print(f"Response was: {response[:500]}")
+            
+            # Fallback recommendations
             recommendations = [
-                {"title": f"Introduction to {request.topic}", "channel": "Khan Academy", "reason": "Clear explanations"},
-                {"title": f"{request.topic} Guide", "channel": "Physics Wallah", "reason": "In-depth coverage"},
-                {"title": f"Understanding {request.topic}", "channel": "Vedantu", "reason": "Student-friendly"}
+                {
+                    "title": f"Introduction to {request.topic}",
+                    "channel": "Khan Academy",
+                    "reason": "Comprehensive introduction with clear explanations"
+                },
+                {
+                    "title": f"{request.topic} - Complete Guide",
+                    "channel": "Crash Course",
+                    "reason": "In-depth coverage with visual aids"
+                },
+                {
+                    "title": f"Understanding {request.topic}",
+                    "channel": "3Blue1Brown",
+                    "reason": "Visual and intuitive explanations"
+                }
             ]
         
-        return {"recommendations": recommendations}
+        return {
+            "topic": request.topic,
+            "recommendations": recommendations
+        }
+        
     except Exception as e:
         print(f"❌ YouTube recommendation error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"YouTube recommendation failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================================
-# MAIN
+# RUN SERVER
 # ============================================================================
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    print("\n" + "="*60)
+    print("🚀 Starting BeyondChats Server...")
+    print("="*60)
+    print(f"📡 API: http://localhost:8000")
+    print(f"📚 Docs: http://localhost:8000/docs")
+    print(f"🔧 Health: http://localhost:8000/health")
+    print("="*60 + "\n")
+    
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
