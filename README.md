@@ -74,24 +74,25 @@ cd smartstudy
 
 ### 2. Backend Setup
 ```bash
-# Navigate to backend directory (if separate) or project root
-cd backend
-
-# Create virtual environment
-python -m venv venv
-
-# Activate virtual environment
-# Windows:
-venv\Scripts\activate
-# macOS/Linux:
-source venv/bin/activate
-
-# Install dependencies
-pip install fastapi uvicorn motor pymongo python-multipart
+# Install ALL required dependencies
+pip install fastapi uvicorn[standard] motor pymongo python-multipart
 pip install pdfplumber PyPDF2 PyMuPDF
-pip install httpx python-dotenv
+pip install httpx python-dotenv bson
 
-# Or install from requirements.txt if available
+# Or create requirements.txt:
+cat > requirements.txt << EOF
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+motor==3.3.2
+pymongo==4.6.0
+python-multipart==0.0.6
+pdfplumber==0.10.3
+PyPDF2==3.0.1
+PyMuPDF==1.23.8
+httpx==0.25.2
+python-dotenv==1.0.0
+EOF
+
 pip install -r requirements.txt
 ```
 
